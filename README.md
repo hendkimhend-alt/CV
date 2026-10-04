@@ -6,15 +6,12 @@ preprocess.py             detect.py           metrics.py · evaluate.py (초안)
                     └──── src/run_pipeline.py 로 한 번에 ────┘
 ```
 
-자세한 설계와 이유: [`docs/1차_과제수행계획서_v2.md`](docs/1차_과제수행계획서_v2.md)
-
 ## 폴더
 
 | 폴더 | 내용 | git |
 |---|---|---|
 | `src/` | 파이프라인 코드 — A: `preprocess.py` `metrics.py` `A.py` / B: `detect.py` `visualize.py` `run_detect.py` / 공통: `paths.py` `data.py`(정답 로더) `evaluate.py`(hit/miss) `run_pipeline.py`(전체 실행) | 올림 |
 | `analysis/` | 데이터 분석·평가 스크립트 (13장 실측, RDD 분석, 색 채널, 검출기 평가, 계획서 그림) | 올림 |
-| `docs/` | 1차 과제수행계획서 (제출본) + `docs/images/` 그림. 그 외 작업 문서는 각자 로컬에 | 올림 |
 | `labels/` | 정답 박스 CSV (문서 담당) | 올림 |
 | `results/` | **팀이 공유할 결과** (CSV·요약 md). 실행 출력 중 남길 것만 골라서 옮긴다 | 올림 |
 | `data/` | 데이터 — 각자 넣는다 ([`data/README.md`](data/README.md)) | 안 올림 |

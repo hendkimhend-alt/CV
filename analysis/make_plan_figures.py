@@ -1,8 +1,8 @@
 """
 1차 과제수행계획서용 그림 생성.
-출력: docs/images/fig1_problems.png (문제가 실제로 어떻게 보이나)
-      docs/images/fig2_pipeline.png (전체 흐름과 각 단계의 이유)
-      docs/images/fig3_detect_idea.png (검출 아이디어 단계별)
+출력: outputs/figures/fig1_problems.png (문제가 실제로 어떻게 보이나)
+      outputs/figures/fig2_pipeline.png (전체 흐름과 각 단계의 이유)
+      outputs/figures/fig3_detect_idea.png (검출 아이디어 단계별)
 실행: python analysis/make_plan_figures.py
 """
 import os, sys
@@ -15,12 +15,12 @@ from matplotlib.patches import FancyBboxPatch, FancyArrowPatch
 
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(BASE, "src"))
-from paths import PROVIDED_DIR, imread
+from paths import OUTPUT_DIR, PROVIDED_DIR, imread
 import detect as D
 from run_detect import prepare
 
 DATA = str(PROVIDED_DIR)
-OUT = os.path.join(BASE, "docs", "images")
+OUT = str(OUTPUT_DIR / "figures")
 os.makedirs(OUT, exist_ok=True)
 # 한글 글꼴: 설치된 것 중 첫 번째 (macOS Pretendard·Apple SD Gothic Neo / Windows 맑은 고딕)
 from matplotlib import font_manager
