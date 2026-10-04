@@ -1,0 +1,15 @@
+# 데이터: 각자 data/ 아래에 둔다 (data/README.md 참고)
+data/*
+!data/README.md
+
+# 실행 출력: 매번 새로 생성. 공유할 결과는 results/로 옮겨서 올린다
+outputs/
+
+# Python·OS
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
