@@ -1,4 +1,4 @@
-"""개발 A 전처리·자동 품질 분류: py m1/A.py [--limit N]."""
+"""개발 A 전처리·자동 품질 분류: python src/A.py [--input 폴더] [--limit N]."""
 
 from __future__ import annotations
 
@@ -27,11 +27,11 @@ else:
                             classify_quality, geometry_preprocess, preprocess_condition, validate_config, validate_image,
                             validate_thresholds)
 
-# 기능: 이미지 입력은 아래 한 줄을 수정한다. 출력은 기존처럼 m1의 새 실행 폴더다.
+# 기능: 입력·출력 기본 위치는 paths.py(저장소 기준)에서 가져온다. 다른 폴더는 --input으로 지정한다.
 # 특징: 수동 그룹 파일 없이 보정 전 품질값으로 자동 분류하고 세 조건을 모두 실행한다.
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_INPUT = PROJECT_ROOT / "img" / "RDD2020_train" / "train" / "img" #!!!입력값!!!!
-DEFAULT_OUTPUT = PROJECT_ROOT / "m1"                                     #!!!출력위치!!!
+from paths import OUTPUT_DIR, RDD_DIR
+DEFAULT_INPUT = RDD_DIR / "img"
+DEFAULT_OUTPUT = OUTPUT_DIR / "A"
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff", ".webp"}
 PROCESSING_ERRORS = (ValueError, OSError, UnicodeError, cv2.error, csv.Error)
 PLOT_METRICS = ("gray_mean", "block_mean_std_4x4", "laplacian_variance", "noise_sigma", "saturation_ratio")
@@ -268,7 +268,7 @@ def run_experiments(input_dir=None, output_dir=None, limit=None, cfg=None, datas
         raise ValueError("error:limit은 1 이상의 정수")
     if output_dir.is_relative_to(input_dir):
         raise ValueError("error:출력 폴더는 입력 폴더 안에 둘 수 없음")
-    is_rdd = input_dir == (PROJECT_ROOT / "img/RDD2020_train/train/img").resolve()
+    is_rdd = input_dir == DEFAULT_INPUT.resolve()
     dataset = ("RDD2020" if is_rdd else input_dir.name or "IMAGES") if dataset is None else dataset
     images = discover_images(input_dir, dataset)
     if not images:
@@ -361,7 +361,8 @@ def run_experiments(input_dir=None, output_dir=None, limit=None, cfg=None, datas
 # 기능: 간단한 실행 옵션을 읽어 1차 실험을 시작한다.
 # 특징: 이미지 경로는 코드 상단에서 변경한다. 실행 중단 오류는 error:원인과 종료 코드 1로 표시한다.
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="개발 A 자동 품질 분류·전처리 비교; 입력 폴더는 A.py 상단에서 변경")
+    parser = argparse.ArgumentParser(description="개발 A 자동 품질 분류·전처리 비교")
+    parser.add_argument("--input", help="입력 이미지 폴더 (기본: data/RDD2020_train/train/img)")
     parser.add_argument("--limit", type=int, help="정렬된 처음 N장만 처리")
     # 기능: 명령줄 형식 오류도 다른 오류와 같은 한 줄 형식으로 표시한다.
     # 특징: --help는 argparse의 표준 안내를 그대로 사용한다.
@@ -370,7 +371,7 @@ def main(argv=None):
     parser.error = argument_error
     args = parser.parse_args(argv)
     try:
-        run_experiments(limit=args.limit)
+        run_experiments(input_dir=args.input, limit=args.limit)
         return 0
     except PROCESSING_ERRORS as exc:
         print(error_text(exc), file=sys.stderr)

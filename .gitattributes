@@ -1,0 +1,6 @@
+# Windows/macOS 줄바꿈 차이로 diff가 전부 바뀌는 것 방지
+* text=auto eol=lf
+*.bat text eol=crlf
+*.png binary
+*.jpg binary
+*.pdf binary
