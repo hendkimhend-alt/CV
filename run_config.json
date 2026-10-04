@@ -1,0 +1,51 @@
+{
+  "program": "A.py",
+  "input_dir": "C:\\Users\\USER\\Desktop\\CV\\img\\RDD2020_train\\train\\img",
+  "dataset": "RDD2020",
+  "dataset_kind": "rdd",
+  "discovered_n": 804,
+  "selected_n": 804,
+  "group_mode": "auto",
+  "group_thresholds": {
+    "blur_laplacian_lt": 50.0,
+    "local_block_std_gt": 44.0
+  },
+  "group_measurement": "P0_reference before Gamma/CLAHE/Unsharp/Gaussian",
+  "config": {
+    "roi": "bottom_half",
+    "roi_overrides": {},
+    "resize": {
+      "long_side": 1024,
+      "allow_upscale": true,
+      "down_interpolation": "area",
+      "up_interpolation": "cubic"
+    },
+    "gamma": {
+      "value": 0.8,
+      "channel": "BGR"
+    },
+    "gaussian": {
+      "kernel": 3,
+      "sigma": 0.8
+    },
+    "clahe": {
+      "clip_limit": 2.0,
+      "tile_grid": [
+        8,
+        8
+      ],
+      "channel": "LAB_L"
+    },
+    "unsharp": {
+      "amount": 0.5,
+      "sigma": 1.0
+    }
+  },
+  "versions": {
+    "python": "3.12.14",
+    "opencv": "4.13.0",
+    "numpy": "2.5.3"
+  },
+  "baseline": "P0_reference = ROI + Resize; original source files are unchanged",
+  "time_policy": "ROI/Resize + correction; reused Gamma counted per condition; excludes I/O and metrics"
+}
