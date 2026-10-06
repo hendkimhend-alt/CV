@@ -7,6 +7,7 @@
   → 검출기 D0 / D1 (B detect)
   → 과제 비교 항목: 에지 수, 특징점 수(SIFT), 후보 수·면적, 처리 시간
   → 정답이 있으면 판정 기준 3개(iou50 / iou30 / in50)로 TP·FP·FN → precision·recall·F1 (evaluate)
+    ROI 밖으로 잘린 정답은 놓침(FN)으로 센다 (count_cut)
   → 오검출: FPPI = 사진 1장당 FP (판정 기준별) / 깨끗한 노면 FPPI = 손상 라벨이 없는 사진 1장당 후보 수
   → 오차 범위: 사진 단위 부트스트랩으로 F1 95% 범위, 기준 조건(--reference, 기본 P1+/D1) 대비 차이 (stats)
   → 진단용 구분력: 정답 박스 TPR − 옆 노면 대조 박스 FPR (판정에는 안 씀, evaluate.separation)
@@ -36,7 +37,7 @@ import numpy as np
 
 from data import list_images, load_gt
 from detect import DEFAULT_CFG as DETECT_CFG, detect
-from evaluate import CRITERIA, KINDS, evaluate, prf, separation, transform_gt
+from evaluate import CRITERIA, KINDS, count_cut, evaluate, prf, separation, transform_gt
 from metrics import measure_quality
 from paths import OUTPUT_DIR, imread, imwrite
 from stats import bootstrap
@@ -91,6 +92,7 @@ def run(dataset="provided", limit=None, conditions=CONDITIONS, detectors=DETECTO
             continue
         gt = gt_loader(path)
         gt_t = transform_gt(gt, geometry) if gt is not None else None
+        cut = count_cut(gt, gt_t) if gt is not None else None     # ROI 밖으로 잘린 정답 → 놓침
         gamma_cache = {}
 
         for cond in conditions:
@@ -116,8 +118,9 @@ def run(dataset="provided", limit=None, conditions=CONDITIONS, detectors=DETECTO
                     row[f"n_{kind}"] = len(ds)
                     row[f"area_{kind}"] = round(sum(d["area"] for d in ds))
                 if gt_t is not None:
-                    for kind, e in evaluate(dets, gt_t).items():
+                    for kind, e in evaluate(dets, gt_t, cut).items():
                         row[f"{kind}_n_gt"] = e["n_gt"]
+                        row[f"{kind}_n_cut"] = e["n_cut"]
                         for c in CRITERIA:
                             row.update({f"{kind}_{c}_{k}": v for k, v in e[c].items()})
                     for kind, e in separation(dets, gt_t, fixed.shape[1], fixed.shape[0]).items():
@@ -180,6 +183,10 @@ def summarize(rows):
         clean = [r for r in with_gt if r["clean"]]
         item["n_images_clean"] = len(clean)
         for kind in KINDS:
+            n_gt = sum(r[f"{kind}_n_gt"] for r in with_gt)
+            n_cut = sum(r[f"{kind}_n_cut"] for r in with_gt)
+            item[f"{kind}_n_gt"], item[f"{kind}_n_cut"] = n_gt, n_cut      # 정답 수 / 그중 ROI 밖으로 잘린 수
+            item[f"{kind}_cut_ratio"] = round(n_cut / n_gt, 4) if n_gt else None
             for c in CRITERIA:
                 tp, fp, fn = (sum(r[f"{kind}_{c}_{k}"] for r in with_gt) for k in ("tp", "fp", "fn"))
                 for name, v in zip(("precision", "recall", "f1"), prf(tp, fp, fn)):

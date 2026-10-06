@@ -13,6 +13,9 @@
       iou50 · iou30은 표준대로 짝을 못 찾은 후보(중복 조각 포함)는 모두 FP.
       recall = TP / 정답 수, precision = TP / (TP + FP), F1 = 둘의 조화평균
 좌표는 둘 다 같은 좌표계(전처리 후 노면 영역)여야 한다 → transform_gt()로 맞춘다.
+ROI 밖으로 잘린 정답(노면 영역과 전혀 안 겹침)은 transform_gt()에서 빠지지만, 검출기가 볼 수 없었을 뿐
+손상은 있었으므로 **놓침(FN)으로 센다** → count_cut()으로 세어 evaluate(cut=)에 넘긴다.
+안 그러면 ROI를 좁힐수록 잘린 정답이 분모에서 빠져 Recall이 부풀려진다.
 
 진단용 — 구분력 (separation(), 판정에는 안 씀. 실패 원인 분석용)
 - 정답 박스마다 바로 옆 노면(좌·우·아래·위, 어떤 정답과도 안 겹침)에 같은 크기 대조 박스를 둔다
@@ -40,6 +43,12 @@ def transform_gt(boxes, geometry):
         if nx2 > nx1 and ny2 > ny1:
             out.append((kind, nx1, ny1, nx2, ny2))
     return out
+
+
+def count_cut(gt_boxes, gt_transformed):
+    """원본 정답 중 ROI 밖으로 잘려 transform_gt()에서 빠진 수 → {kind: n}."""
+    return {kind: sum(g[0] == kind for g in gt_boxes) - sum(g[0] == kind for g in gt_transformed)
+            for kind in KINDS}
 
 
 def _overlaps(det_bbox, gt):
@@ -102,18 +111,20 @@ def _xyxy(bbox):
     return (x, y, x + w, y + h)
 
 
-def evaluate(detections, gt_boxes):
-    """detections: detect() 결과, gt_boxes: transform_gt() 결과
-    → {kind: {"n_gt", "n_det", 기준: {"tp", "fp", "fn"}}} (사진 한 장)"""
+def evaluate(detections, gt_boxes, cut=None):
+    """detections: detect() 결과, gt_boxes: transform_gt() 결과, cut: count_cut() 결과 (ROI 밖 정답 수)
+    → {kind: {"n_gt", "n_cut", "n_det", 기준: {"tp", "fp", "fn"}}} (사진 한 장)
+    n_gt는 잘린 정답까지 포함한 원본 정답 수, 잘린 정답은 모든 기준에서 FN"""
     res = {}
     for kind in KINDS:
         dets = [_xyxy(d["bbox"]) for d in detections if d["type"] == kind]
         gts = [tuple(g[1:]) for g in gt_boxes if g[0] == kind]
-        r = {"n_gt": len(gts), "n_det": len(dets)}
+        n_cut = (cut or {}).get(kind, 0)
+        r = {"n_gt": len(gts) + n_cut, "n_cut": n_cut, "n_det": len(dets)}
         for c in CRITERIA:
             tp, fp, fn = (_match_inside(dets, gts) if c == "in50"
                           else _match_iou(dets, gts, IOU_THRESHOLDS[c]))
-            r[c] = {"tp": tp, "fp": fp, "fn": fn}
+            r[c] = {"tp": tp, "fp": fp, "fn": fn + n_cut}
         res[kind] = r
     return res
 
