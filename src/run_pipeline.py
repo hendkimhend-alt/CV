@@ -43,6 +43,20 @@ QUALITY_KEYS = ("gray_mean", "block_mean_std_4x4", "laplacian_variance", "noise_
 CANNY_EDGES = (100, 200)        # 에지 수 = 13장 실측(표1)과 같은 Canny 기준
 
 
+def new_run_dir(parent):
+    """run_<시각> 폴더를 새로 만든다. 같은 초에 이미 있으면 _2, _3 …을 붙여 앞 결과를 덮어쓰지 않는다."""
+    base = datetime.now(timezone(timedelta(hours=9))).strftime("run_%Y%m%d_%H%M%S")
+    parent.mkdir(parents=True, exist_ok=True)
+    for n in range(1, 1000):
+        run_dir = parent / (base if n == 1 else f"{base}_{n}")
+        try:
+            run_dir.mkdir()
+            return run_dir
+        except FileExistsError:
+            continue
+    raise RuntimeError(f"error:결과 폴더를 만들 수 없음 {parent / base}")
+
+
 def count_edges(gray):
     return int((cv2.Canny(gray, *CANNY_EDGES) > 0).sum())
 
@@ -55,8 +69,7 @@ def run(dataset="provided", limit=None, conditions=CONDITIONS, detectors=DETECTO
     cfg_a = validate_config({})
     sift = cv2.SIFT_create() if keypoints else None
 
-    run_dir = OUTPUT_DIR / "pipeline" / datetime.now(timezone(timedelta(hours=9))).strftime("run_%Y%m%d_%H%M%S")
-    run_dir.mkdir(parents=True, exist_ok=True)
+    run_dir = new_run_dir(OUTPUT_DIR / "pipeline")
     rows = []
     print(f"{name}: {len(images)}장 × 조건 {len(conditions)} × 검출기 {len(detectors)} → {run_dir}", flush=True)
 
