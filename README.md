@@ -37,6 +37,7 @@ python src/run_pipeline.py --dataset rdd_dev   # RDD 개발 세트 563장 — �
 python src/run_pipeline.py --dataset rdd_test  # RDD 테스트 세트 241장 — 최종 설정이 정해진 뒤 한 번만
 python src/run_pipeline.py --dataset rdd       # RDD 804장 전체 — 정답 있음 → precision·recall·F1 (약 3분)
 python src/run_pipeline.py --dataset rdd_dev --limit 50 --no-keypoints   # 빠르게 확인
+python src/run_pipeline.py --dataset rdd_dev --roi bottom_60   # 노면 영역(ROI) 바꾸기: bottom_half(기본) / full / bottom_<N>
 ```
 
 → `outputs/pipeline/run_<시각>/` 에 `results.csv`(사진×조건×검출기), `summary.csv`(조건×검출기×그룹, F1 95% 범위 포함), `compare.csv`(기준 조건 `--reference` 대비 F1 차이와 95% 범위), `images/`(결과 박스, 정답은 초록)
