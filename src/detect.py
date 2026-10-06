@@ -10,6 +10,7 @@ detect(img, cfg) -> list[{bbox, type, area, length, width, elong, contrast, bran
 - D1: 균열 branch   Black-hat(작은 커널) → [선 열림] → 이중 임계값 → Closing
       포트홀 branch Adaptive Threshold(큰 블록) → Opening
 - 공통: 연결 요소 → [가까운 조각 묶기] → 형태 특징 → 규칙으로 crack / pothole / noise → [가장자리 제외]
+        → [양쪽 확인: 균열 후보가 "양쪽 주변보다 모두" 어두운가 — 한쪽만 밝은 계단(그림자 경계 · 차선 옆)은 noise]
 
 [ ]는 cfg로 켜고 끄는 단계. 기본값: 가장자리 제외만 켜짐. 선 열림·조각 묶기는 RDD 평가에서 효과가 없어 꺼 둠
 (재현용으로 남김 — analysis/eval_detector.py). 계획서 원안(adaptive threshold)은 crack_thresh="adaptive"로 재현 가능.
@@ -57,6 +58,14 @@ DEFAULT_CFG = {
     "drop_border": "t",          # 이 변에 닿는 후보 버림: "t"(위) "b"(아래) "l"(왼) "r"(오른) 조합.
                                  # 위(ROI 경계 = 원경 차량·인도)만 — 아래까지 버리면 화면 밖으로 뻗은 균열을 놓침
     "border_margin": 2,
+
+    # 양쪽 확인 — 균열 정의 "주변보다 어둡고 가는 선"의 "주변보다"를 "양쪽 주변보다 모두"로
+    # 균열 = 양쪽이 밝은 골짜기, 그림자 경계 · 차선 옆 = 한쪽만 밝은 계단 → 계단 모양 균열 후보는 noise
+    "valley_check": False,       # 기본 끔 (실험: 검출기 이름 뒤 v — D1v, D0v)
+    "valley_min_ratio": 0.35,    # 양옆 "가운데보다 밝은 정도"의 작은 쪽 ÷ 큰 쪽 (1 = 완전 대칭) — 이보다 작으면 계단
+    "valley_gap": 2,             # 선 폭의 절반 + 이만큼 바깥을 "옆"으로 봄 (px)
+    "valley_samples": 40,        # 후보마다 재는 위치 수
+    "valley_radius": 7,          # 위치마다 선 방향을 구할 주변 반경 (px)
 }
 
 
@@ -74,6 +83,7 @@ def detect(img, cfg=None):
         raise ValueError(f"unknown detector: {cfg['detector']}")
 
     detections = []
+    smooth = cv2.GaussianBlur(gray, (3, 3), 0).astype(np.float32) if cfg["valley_check"] else None
     for branch, mask, bh, hi in branches:
         for pts in _components(mask, cfg["group_ksize"]):
             det = shape_features(pts, bh, hi)
@@ -81,6 +91,10 @@ def detect(img, cfg=None):
             det["branch"] = branch
             if det["type"] != "noise" and _touches_border(det["bbox"], W, H, cfg):
                 det["type"] = "noise"
+            if det["type"] == "crack" and cfg["valley_check"]:
+                det["valley"] = valley_score(smooth, pts, det["width"], cfg)
+                if det["valley"] < cfg["valley_min_ratio"]:
+                    det["type"] = "noise"
             if det["type"] != "noise" or cfg["keep_noise"]:
                 detections.append(det)
     return detections
@@ -175,6 +189,37 @@ def classify(det, img_area, branch, cfg):
             and det["elong"] < cfg["pothole_max_elong"]):
         return "pothole"
     return "noise"
+
+
+def valley_score(gray, pts, width, cfg):
+    """균열 후보가 '양쪽 주변보다 모두' 어두운 정도 (0 ~ 1).
+    후보 픽셀 중 몇 곳에서: 주변 후보 픽셀로 선 방향을 구하고(주성분) → 직각 양옆(폭/2 + gap)의 밝기 − 가운데 밝기
+    → 작은 쪽 ÷ 큰 쪽 (한쪽이라도 가운데보다 어두우면 0). 위치별 값의 중앙값.
+    골짜기(균열) ≈ 1, 계단(그림자 경계 · 차선 옆) ≈ 0"""
+    H, W = gray.shape
+    rng = np.random.default_rng(0)
+    idx = rng.choice(len(pts), size=min(cfg["valley_samples"], len(pts)), replace=False)
+    d = width / 2 + cfg["valley_gap"]
+    r2 = cfg["valley_radius"] ** 2
+    scores = []
+    for x, y in pts[idx].astype(np.float32):
+        near = pts[((pts[:, 0] - x) ** 2 + (pts[:, 1] - y) ** 2) <= r2].astype(np.float32)
+        if len(near) < 3:
+            continue
+        cov = np.cov((near - near.mean(0)).T)
+        vals, vecs = np.linalg.eigh(cov)
+        nx, ny = -vecs[1, 1], vecs[0, 1]                     # 선 방향(최대 고유벡터)에 직각
+        sides = []
+        for sgn in (1, -1):
+            sx, sy = int(round(x + sgn * d * nx)), int(round(y + sgn * d * ny))
+            if not (0 <= sx < W and 0 <= sy < H):
+                break
+            sides.append(gray[sy, sx] - gray[int(y), int(x)])
+        if len(sides) < 2:
+            continue
+        lo, hi = min(sides), max(sides)
+        scores.append(0.0 if lo <= 0 or hi <= 0 else lo / hi)
+    return float(np.median(scores)) if scores else 1.0     # 잴 수 없으면 버리지 않음
 
 
 def _touches_border(bbox, W, H, cfg):
