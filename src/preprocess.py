@@ -67,10 +67,10 @@ def roi_bottom_percent(roi):
 # 기능: ROI 형식과 좌표·크기를 검사한다.
 # 특징: 이미지 경계 검사는 실제 해상도를 아는 geometry_preprocess에서 수행한다.
 def check_roi(roi):
-    if isinstance(roi, str) and (roi in {"bottom_half", "full"} or roi_bottom_percent(roi)):
+    if isinstance(roi, str) and (roi in {"bottom_half", "full", "auto"} or roi_bottom_percent(roi)):
         return
     if not isinstance(roi, list) or len(roi) != 4:
-        raise ValueError("error:ROI는 bottom_half/full/bottom_<N> 또는 [x,y,width,height]")
+        raise ValueError("error:ROI는 bottom_half/full/auto/bottom_<N> 또는 [x,y,width,height]")
     for index, value in enumerate(roi):
         check_number(value, "roi", 0 if index < 2 else 1, integer=True)
 
@@ -190,6 +190,14 @@ def geometry_preprocess(img, cfg, image_id=""):
         x, y, width, height = 0, original_h // 2, original_w, original_h - original_h // 2
     elif roi == "full":
         x, y, width, height = 0, 0, original_w, original_h
+    elif roi == "auto":
+        # 사진마다 도로가 시작하는 높이를 찾아 그 위만 자름 (src/roi.py)
+        if __package__:
+            from .roi import road_top
+        else:
+            from roi import road_top
+        y = round(original_h * road_top(img))
+        x, width, height = 0, original_w, original_h - y
     elif roi_bottom_percent(roi):
         height = max(1, round(original_h * roi_bottom_percent(roi) / 100))
         x, y, width = 0, original_h - height, original_w
