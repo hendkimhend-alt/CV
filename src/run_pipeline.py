@@ -74,14 +74,14 @@ def count_edges(gray):
 
 
 def run(dataset="provided", limit=None, conditions=CONDITIONS, detectors=DETECTORS,
-        keypoints=True, save_images=5, n_boot=1000, reference=("P1+", "D1"), roi="bottom_half"):
+        keypoints=True, save_images=5, n_boot=1000, reference=("P1+", "D1"), roi="bottom_half", flatten_ksize=None):
     for cond in conditions:
         parse_condition(cond)                                    # 잘못된 조건 이름은 실행 전에 오류
     name, folder, images = list_images(dataset)
     images = images[:limit] if limit else images
     gt_loader = load_gt(dataset, name)
     viewpoints = load_viewpoints(dataset)
-    cfg_a = validate_config({"roi": roi})
+    cfg_a = validate_config({"roi": roi, **({"flatten": {"ksize": flatten_ksize}} if flatten_ksize else {})})
     cfg_group = validate_config({"roi": "bottom_half"})       # 분석용 품질 그룹은 항상 하단 50%
     sift = cv2.SIFT_create() if keypoints else None
 
@@ -256,17 +256,18 @@ def main():
     p.add_argument("--dataset", default="provided", help="provided / captured / rdd / rdd_dev / rdd_test 또는 폴더 경로")
     p.add_argument("--limit", type=int, help="처음 N장만")
     p.add_argument("--conditions", nargs="+", default=list(CONDITIONS),
-                   help="P0_reference / P1 / P1+ 또는 켤 단계를 +로 이은 것 (gamma · clahe · unsharp · gaussian, 예: gamma+gaussian, none)")
+                   help="P0_reference / P1 / P1+ 또는 켤 단계를 +로 이은 것 (flatten · gamma · clahe · unsharp · gaussian, 예: flatten, gamma+gaussian, none)")
     p.add_argument("--detectors", nargs="+", default=list(DETECTORS), choices=DETECTORS)
     p.add_argument("--no-keypoints", action="store_true", help="SIFT 특징점 수 생략 (빠르게)")
     p.add_argument("--save-images", type=int, default=5, help="결과 그림 저장 장수 (0 = 안 함, -1 = 전부)")
     p.add_argument("--bootstrap", type=int, default=1000, help="F1 오차 범위 부트스트랩 횟수 (0 = 안 함)")
     p.add_argument("--reference", default="P1+/D1", help="차이를 잴 기준 조건 '전처리/검출기' (기본: 1차 최종 후보)")
+    p.add_argument("--flatten-ksize", type=int, help="조명 펴기 배경 크기 (긴 변 1024 기준 픽셀, 기본 61)")
     p.add_argument("--roi", default="bottom_half",
                    help="노면 영역: bottom_half(기본) / full(전체) / bottom_<N>(아래쪽 N%%만, 예: bottom_60) / auto(사진마다 도로 시작 높이)")
     a = p.parse_args()
     run(a.dataset, a.limit, tuple(a.conditions), tuple(a.detectors), not a.no_keypoints, a.save_images,
-        a.bootstrap, tuple(a.reference.split("/")), a.roi)
+        a.bootstrap, tuple(a.reference.split("/")), a.roi, a.flatten_ksize)
 
 
 if __name__ == "__main__":
