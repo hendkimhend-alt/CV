@@ -8,10 +8,12 @@
   → 과제 비교 항목: 에지 수, 특징점 수(SIFT), 후보 수·면적, 처리 시간
   → 정답이 있으면 판정 기준 3개(iou50 / iou30 / in50)로 TP·FP·FN → precision·recall·F1 (evaluate)
   → 오검출: FPPI = 사진 1장당 FP (판정 기준별) / 깨끗한 노면 FPPI = 손상 라벨이 없는 사진 1장당 후보 수
+  → 오차 범위: 사진 단위 부트스트랩으로 F1 95% 범위, 기준 조건(--reference, 기본 P1+/D1) 대비 차이 (stats)
 
 출력 (outputs/pipeline/run_<시각>/):
   results.csv   사진 × 조건 × 검출기 한 줄씩
-  summary.csv   조건 × 검출기 × 그룹 평균, precision·recall·F1은 TP·FP·FN 전체 합산 (판정 기준별)
+  summary.csv   조건 × 검출기 × 그룹 평균, precision·recall·F1은 TP·FP·FN 전체 합산 (판정 기준별), F1 95% 범위
+  compare.csv   기준 조건 대비 F1 차이와 95% 범위, 의미 있는 차이인지 (그룹 × 종류 × 판정 기준)
   images/       결과 박스 그림 (--save-images N: 처음 N장, 0 = 저장 안 함, -1 = 전부)
   run_config.json  실행 설정·버전
 
@@ -36,6 +38,7 @@ from detect import DEFAULT_CFG as DETECT_CFG, detect
 from evaluate import CRITERIA, KINDS, evaluate, prf, transform_gt
 from metrics import measure_quality
 from paths import OUTPUT_DIR, imread, imwrite
+from stats import bootstrap
 from preprocess import CONDITIONS, classify_quality, geometry_preprocess, preprocess_condition, validate_config
 from visualize import draw_detections
 
@@ -63,7 +66,7 @@ def count_edges(gray):
 
 
 def run(dataset="provided", limit=None, conditions=CONDITIONS, detectors=DETECTORS,
-        keypoints=True, save_images=5):
+        keypoints=True, save_images=5, n_boot=1000, reference=("P1+", "D1")):
     name, folder, images = list_images(dataset)
     images = images[:limit] if limit else images
     gt_loader = load_gt(dataset, name)
@@ -130,15 +133,28 @@ def run(dataset="provided", limit=None, conditions=CONDITIONS, detectors=DETECTO
     if not rows:
         raise ValueError("error:처리된 사진 없음")
     summary = summarize(rows)
+    compare = []
+    if n_boot and any(r["has_gt"] for r in rows):
+        ci, compare = bootstrap(rows, tuple(reference), n_boot)
+        for item in summary:
+            for kind in KINDS:
+                for c in CRITERIA:
+                    lo, hi = ci.get((item["condition"], item["detector"], item["group"], kind, c), (None, None))
+                    item[f"{kind}_{c}_f1_lo"] = None if lo is None else round(lo, 4)
+                    item[f"{kind}_{c}_f1_hi"] = None if hi is None else round(hi, 4)
     write_csv(run_dir / "results.csv", rows)
     write_csv(run_dir / "summary.csv", summary)
+    if compare:
+        write_csv(run_dir / "compare.csv", compare)
     (run_dir / "run_config.json").write_text(json.dumps({
         "dataset": name, "folder": str(folder), "n_images": len(images), "conditions": list(conditions),
         "detectors": list(detectors), "preprocess_cfg": cfg_a, "detect_cfg": DETECT_CFG,
         "edges": f"Canny{CANNY_EDGES}", "keypoints": "SIFT" if keypoints else None,
+        "bootstrap": n_boot, "reference": list(reference),
         "versions": {"python": platform.python_version(), "opencv": cv2.__version__, "numpy": np.__version__},
     }, ensure_ascii=False, indent=2), encoding="utf-8")
     print_table(summary)
+    print_compare(compare)
     print(f"완료 → {run_dir}")
     return run_dir
 
@@ -191,6 +207,18 @@ def print_table(summary):
                   f"{fmt(s['mean_preprocess_ms'], 1):>9}")
 
 
+def print_compare(compare):
+    """판정 기준 고르기용: 전체 그룹·균열에서 기준 조건과 F1 차이가 의미 있는 조건 수 (기준별)."""
+    rows = [c for c in compare if c["group"] == "all" and c["kind"] == "crack"]
+    if not rows:
+        return
+    print(f"\n기준 조건 {rows[0]['reference']} 대비 균열 F1 차이 (전체, 95% 범위가 0을 안 포함하면 *)")
+    for crit in CRITERIA:
+        rs = [c for c in rows if c["criterion"] == crit]
+        cells = "  ".join(f"{c['condition']}/{c['detector']} {c['delta']:+.3f}{'*' if c['significant'] else ' '}" for c in rs)
+        print(f"  {crit:<6} 의미 있는 차이 {sum(c['significant'] for c in rs)}/{len(rs)}  |  {cells}")
+
+
 def main():
     p = argparse.ArgumentParser(description="전체 실행: 전처리(A) → 검출(B) → 평가")
     p.add_argument("--dataset", default="provided", help="provided / captured / rdd / rdd_dev / rdd_test 또는 폴더 경로")
@@ -199,8 +227,11 @@ def main():
     p.add_argument("--detectors", nargs="+", default=list(DETECTORS), choices=DETECTORS)
     p.add_argument("--no-keypoints", action="store_true", help="SIFT 특징점 수 생략 (빠르게)")
     p.add_argument("--save-images", type=int, default=5, help="결과 그림 저장 장수 (0 = 안 함, -1 = 전부)")
+    p.add_argument("--bootstrap", type=int, default=1000, help="F1 오차 범위 부트스트랩 횟수 (0 = 안 함)")
+    p.add_argument("--reference", default="P1+/D1", help="차이를 잴 기준 조건 '전처리/검출기' (기본: 1차 최종 후보)")
     a = p.parse_args()
-    run(a.dataset, a.limit, tuple(a.conditions), tuple(a.detectors), not a.no_keypoints, a.save_images)
+    run(a.dataset, a.limit, tuple(a.conditions), tuple(a.detectors), not a.no_keypoints, a.save_images,
+        a.bootstrap, tuple(a.reference.split("/")))
 
 
 if __name__ == "__main__":
