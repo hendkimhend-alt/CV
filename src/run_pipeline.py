@@ -7,6 +7,7 @@
   → 검출기 D0 / D1 (B detect)
   → 과제 비교 항목: 에지 수, 특징점 수(SIFT), 후보 수·면적, 처리 시간
   → 정답이 있으면 판정 기준 3개(iou50 / iou30 / in50)로 TP·FP·FN → precision·recall·F1 (evaluate)
+  → 오검출: FPPI = 사진 1장당 FP (판정 기준별) / 깨끗한 노면 FPPI = 손상 라벨이 없는 사진 1장당 후보 수
 
 출력 (outputs/pipeline/run_<시각>/):
   results.csv   사진 × 조건 × 검출기 한 줄씩
@@ -90,7 +91,8 @@ def run(dataset="provided", limit=None, conditions=CONDITIONS, detectors=DETECTO
                 det_ms = (time.perf_counter() - t0) * 1000
                 row = {"image": path.name, "dataset": name, "group": ";".join(tags), "condition": cond,
                        "detector": det_name, "preprocess_ms": round(pre_ms, 2), "detect_ms": round(det_ms, 2),
-                       "n_edges": n_edges, "n_keypoints": n_kp, "has_gt": gt_t is not None}
+                       "n_edges": n_edges, "n_keypoints": n_kp, "has_gt": gt_t is not None,
+                       "clean": gt is not None and len(gt) == 0}      # 원본에 손상 라벨이 하나도 없는 사진
                 row.update({k: quality[k] for k in QUALITY_KEYS})
                 for kind in KINDS:
                     ds = [d for d in dets if d["type"] == kind]
@@ -143,11 +145,15 @@ def summarize(rows):
             item[f"mean_{k}"] = round(float(np.mean(vals)), 4) if vals else None
         with_gt = [r for r in rs if r["has_gt"]]
         item["n_images_gt"] = len(with_gt)
+        clean = [r for r in with_gt if r["clean"]]
+        item["n_images_clean"] = len(clean)
         for kind in KINDS:
             for c in CRITERIA:
                 tp, fp, fn = (sum(r[f"{kind}_{c}_{k}"] for r in with_gt) for k in ("tp", "fp", "fn"))
                 for name, v in zip(("precision", "recall", "f1"), prf(tp, fp, fn)):
                     item[f"{kind}_{c}_{name}"] = None if v is None else round(v, 4)
+                item[f"{kind}_{c}_fppi"] = round(fp / len(with_gt), 4) if with_gt else None
+            item[f"{kind}_clean_fppi"] = round(sum(r[f"n_{kind}"] for r in clean) / len(clean), 4) if clean else None
         out.append(item)
     return out
 
@@ -163,12 +169,13 @@ def write_csv(path, rows):
 def print_table(summary):
     fmt = lambda v, p=2: "-" if v is None else f"{v:.{p}f}"
     print(f"\n{'조건':<13}{'검출':<5}{'에지':>8}{'특징점':>8}{'균열후보':>8}"
-          + "".join(f"{'균열F1 ' + c:>13}" for c in CRITERIA) + f"{'포트홀F1 in50':>14}{'전처리ms':>9}")
+          + "".join(f"{'균열F1 ' + c:>13}" for c in CRITERIA) + f"{'포트홀F1 in50':>14}{'균열FPPI in50':>14}{'깨끗한노면FPPI':>14}{'전처리ms':>9}")
     for s in summary:
         if s["group"] == "all":
             print(f"{s['condition']:<13}{s['detector']:<5}{fmt(s['mean_n_edges'], 0):>8}{fmt(s['mean_n_keypoints'], 0):>8}"
                   f"{fmt(s['mean_n_crack'], 1):>8}" + "".join(f"{fmt(s[f'crack_{c}_f1']):>13}" for c in CRITERIA)
-                  + f"{fmt(s['pothole_in50_f1']):>14}{fmt(s['mean_preprocess_ms'], 1):>9}")
+                  + f"{fmt(s['pothole_in50_f1']):>14}{fmt(s['crack_in50_fppi'], 1):>14}{fmt(s['crack_clean_fppi'], 1):>14}"
+                  f"{fmt(s['mean_preprocess_ms'], 1):>9}")
 
 
 def main():
