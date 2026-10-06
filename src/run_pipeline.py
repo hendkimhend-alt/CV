@@ -12,6 +12,9 @@
   → 오차 범위: 사진 단위 부트스트랩으로 F1 95% 범위, 기준 조건(--reference, 기본 P1+/D1) 대비 차이 (stats)
   → 진단용 구분력: 정답 박스 TPR − 옆 노면 대조 박스 FPR (판정에는 안 씀, evaluate.separation)
   → 집계 묶음: 전체 / 품질 그룹 / RDD면 시점(vp_far · vp_road_full · vp_ambiguous, labels/viewpoint_rdd.csv)
+    품질 그룹(group, 분석용)은 --roi와 상관없이 **항상 하단 50%** 로 잰다 — 그룹은 사진 자체의 성질이라
+    ROI를 바꿔도 변하면 안 되고, 기준값(흐림 50 · 국소 조도 44)과 데이터 분할이 하단 50% 기준이므로.
+    방법 안의 판단(흐린 사진에만 언샤프 등)은 실제로 처리하는 사진(roi_tags)으로 한다
     시점 라벨은 결과를 나눠 보는 데만 쓰고 검출 방법은 보지 않는다
 
 출력 (outputs/pipeline/run_<시각>/):
@@ -76,6 +79,7 @@ def run(dataset="provided", limit=None, conditions=CONDITIONS, detectors=DETECTO
     gt_loader = load_gt(dataset, name)
     viewpoints = load_viewpoints(dataset)
     cfg_a = validate_config({"roi": roi})
+    cfg_group = validate_config({"roi": "bottom_half"})       # 분석용 품질 그룹은 항상 하단 50%
     sift = cv2.SIFT_create() if keypoints else None
 
     run_dir = new_run_dir(OUTPUT_DIR / "pipeline")
@@ -89,7 +93,9 @@ def run(dataset="provided", limit=None, conditions=CONDITIONS, detectors=DETECTO
             ref, geometry = geometry_preprocess(img, cfg_a, path.name)
             geometry_ms = (time.perf_counter() - t0) * 1000
             ref_quality = measure_quality(ref)
-            tags = classify_quality(ref_quality)
+            tags = classify_quality(ref_quality)                # 방법 안 판단용 (실제로 처리하는 사진)
+            group = tags if roi == "bottom_half" else classify_quality(
+                measure_quality(geometry_preprocess(img, cfg_group, path.name)[0]))   # 분석용 (항상 하단 50%)
         except (ValueError, cv2.error) as exc:
             print(f"  건너뜀 {path.name}: {exc}", flush=True)
             continue
@@ -111,7 +117,7 @@ def run(dataset="provided", limit=None, conditions=CONDITIONS, detectors=DETECTO
                 t0 = time.perf_counter()
                 dets = detect(fixed, {"detector": det_name})
                 det_ms = (time.perf_counter() - t0) * 1000
-                row = {"image": path.name, "dataset": name, "group": ";".join(tags),
+                row = {"image": path.name, "dataset": name, "group": ";".join(group), "roi_tags": ";".join(tags),
                        "viewpoint": viewpoints.get(path.name, ""),
                        "roi_top": round(geometry["crop_y"] / geometry["original_height"], 4),   # 잘라 낸 위쪽 비율
                        "condition": cond,
