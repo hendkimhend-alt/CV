@@ -37,12 +37,16 @@ python src/run_pipeline.py --dataset rdd_dev   # RDD 개발 세트 563장 — �
 python src/run_pipeline.py --dataset rdd_test  # RDD 테스트 세트 241장 — 최종 설정이 정해진 뒤 한 번만
 python src/run_pipeline.py --dataset rdd       # RDD 804장 전체 — 정답 있음 → precision·recall·F1 (약 3분)
 python src/run_pipeline.py --dataset rdd_dev --limit 50 --no-keypoints   # 빠르게 확인
-python src/run_pipeline.py --dataset rdd_dev --roi bottom_60   # 노면 영역(ROI) 바꾸기: bottom_half(기본) / full / bottom_<N>
+python src/run_pipeline.py --dataset rdd_dev --roi auto   # 노면 영역(ROI): bottom_half(기본) / full / bottom_<N> / auto(사진마다 도로 시작 높이)
+python src/run_pipeline.py --dataset rdd_dev --roi auto --conditions none gamma gaussian gamma+gaussian   # 보정 단계를 골라 켜기
 ```
 
 → `outputs/pipeline/run_<시각>/` 에 `results.csv`(사진×조건×검출기), `summary.csv`(조건×검출기×그룹, F1 95% 범위 포함), `compare.csv`(기준 조건 `--reference` 대비 F1 차이와 95% 범위), `images/`(결과 박스, 정답은 초록)
 RDD는 **dev 70% / test 30%로 나눠 쓴다** (`labels/split_rdd.csv`, 기준·규칙은 [`labels/README.md`](labels/README.md)). test를 보고 값을 고치면 test가 아니게 되므로, 실험은 `rdd_dev`로 한다.
 제공 13장·촬영분은 정답 CSV가 `labels/provided.csv`, `labels/captured.csv`에 생기면 자동으로 precision·recall·F1까지 계산한다 ([`labels/README.md`](labels/README.md)).
+
+**전처리 조건** — `P0_reference`(보정 없음) · `P1`(gamma+gaussian) · `P1+`(gamma+clahe+unsharp+gaussian) 묶음, 또는 켤 단계를 `+`로 이어 직접 지정(`gamma` · `clahe` · `unsharp` · `gaussian`, `none`). 단계는 입력 순서와 상관없이 항상 gamma → clahe → unsharp → gaussian 순서로 적용, unsharp는 흐린 사진에만.
+실험 원칙: 이미 정한 단계는 켜고, 아직 안 정한 단계는 끈다.
 
 **평가 지표** — 개선 판정은 박스 단위 **F1** 하나로 한다 (`src/evaluate.py`). 정답 판정 기준 3개를 모두 기록한다:
 `iou50` IoU > 0.5 (표준, RDD 대회와 같은 정의) / `iou30` IoU > 0.3 / `in50` 후보 면적의 절반 이상이 정답 박스 안 (같은 정답 안의 추가 조각은 제외).
