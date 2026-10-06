@@ -6,17 +6,17 @@
   → 조건 P0 / P1 / P1+ 보정 (A preprocess_condition) → 품질 지표 (A measure_quality)
   → 검출기 D0 / D1 (B detect)
   → 과제 비교 항목: 에지 수, 특징점 수(SIFT), 후보 수·면적, 처리 시간
-  → 정답이 있으면 hit/miss → precision·recall (evaluate)
+  → 정답이 있으면 판정 기준 3개(iou50 / iou30 / in50)로 TP·FP·FN → precision·recall·F1 (evaluate)
 
 출력 (outputs/pipeline/run_<시각>/):
   results.csv   사진 × 조건 × 검출기 한 줄씩
-  summary.csv   조건 × 검출기 × 그룹 평균, precision·recall은 전체 합산
+  summary.csv   조건 × 검출기 × 그룹 평균, precision·recall·F1은 TP·FP·FN 전체 합산 (판정 기준별)
   images/       결과 박스 그림 (--save-images N: 처음 N장, 0 = 저장 안 함, -1 = 전부)
   run_config.json  실행 설정·버전
 
 실행:
   python src/run_pipeline.py                      # 제공 13장
-  python src/run_pipeline.py --dataset rdd        # RDD 804장 (정답 있음 → precision·recall)
+  python src/run_pipeline.py --dataset rdd_dev    # RDD 개발 세트 563장 (정답 있음 → precision·recall·F1)
   python src/run_pipeline.py --dataset rdd --limit 50 --save-images 10
 """
 import argparse
@@ -32,7 +32,7 @@ import numpy as np
 
 from data import list_images, load_gt
 from detect import DEFAULT_CFG as DETECT_CFG, detect
-from evaluate import KINDS, evaluate, transform_gt
+from evaluate import CRITERIA, KINDS, evaluate, prf, transform_gt
 from metrics import measure_quality
 from paths import OUTPUT_DIR, imread, imwrite
 from preprocess import CONDITIONS, classify_quality, geometry_preprocess, preprocess_condition, validate_config
@@ -111,8 +111,9 @@ def run(dataset="provided", limit=None, conditions=CONDITIONS, detectors=DETECTO
                     row[f"area_{kind}"] = round(sum(d["area"] for d in ds))
                 if gt_t is not None:
                     for kind, e in evaluate(dets, gt_t).items():
-                        row.update({f"{kind}_n_gt": e["n_gt"], f"{kind}_hit_gt": e["hit_gt"],
-                                    f"{kind}_correct_det": e["correct_det"]})
+                        row[f"{kind}_n_gt"] = e["n_gt"]
+                        for c in CRITERIA:
+                            row.update({f"{kind}_{c}_{k}": v for k, v in e[c].items()})
                 rows.append(row)
 
                 if save_images < 0 or i <= save_images:
@@ -154,11 +155,12 @@ def summarize(rows):
             vals = [r[k] for r in rs if r.get(k) is not None]
             item[f"mean_{k}"] = round(float(np.mean(vals)), 4) if vals else None
         with_gt = [r for r in rs if r["has_gt"]]
+        item["n_images_gt"] = len(with_gt)
         for kind in KINDS:
-            n_gt = sum(r[f"{kind}_n_gt"] for r in with_gt)
-            n_det = sum(r[f"n_{kind}"] for r in with_gt)
-            item[f"{kind}_recall"] = round(sum(r[f"{kind}_hit_gt"] for r in with_gt) / n_gt, 4) if n_gt else None
-            item[f"{kind}_precision"] = round(sum(r[f"{kind}_correct_det"] for r in with_gt) / n_det, 4) if n_det else None
+            for c in CRITERIA:
+                tp, fp, fn = (sum(r[f"{kind}_{c}_{k}"] for r in with_gt) for k in ("tp", "fp", "fn"))
+                for name, v in zip(("precision", "recall", "f1"), prf(tp, fp, fn)):
+                    item[f"{kind}_{c}_{name}"] = None if v is None else round(v, 4)
         out.append(item)
     return out
 
@@ -173,12 +175,13 @@ def write_csv(path, rows):
 
 def print_table(summary):
     fmt = lambda v, p=2: "-" if v is None else f"{v:.{p}f}"
-    print(f"\n{'조건':<13}{'검출':<5}{'에지':>8}{'특징점':>8}{'균열후보':>8}{'균열 P':>8}{'균열 R':>8}{'포트홀 R':>9}{'전처리ms':>9}")
+    print(f"\n{'조건':<13}{'검출':<5}{'에지':>8}{'특징점':>8}{'균열후보':>8}"
+          + "".join(f"{'균열F1 ' + c:>13}" for c in CRITERIA) + f"{'포트홀F1 in50':>14}{'전처리ms':>9}")
     for s in summary:
         if s["group"] == "all":
             print(f"{s['condition']:<13}{s['detector']:<5}{fmt(s['mean_n_edges'], 0):>8}{fmt(s['mean_n_keypoints'], 0):>8}"
-                  f"{fmt(s['mean_n_crack'], 1):>8}{fmt(s['crack_precision']):>8}{fmt(s['crack_recall']):>8}"
-                  f"{fmt(s['pothole_recall']):>9}{fmt(s['mean_preprocess_ms'], 1):>9}")
+                  f"{fmt(s['mean_n_crack'], 1):>8}" + "".join(f"{fmt(s[f'crack_{c}_f1']):>13}" for c in CRITERIA)
+                  + f"{fmt(s['pothole_in50_f1']):>14}{fmt(s['mean_preprocess_ms'], 1):>9}")
 
 
 def main():
