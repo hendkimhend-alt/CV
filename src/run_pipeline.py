@@ -68,16 +68,16 @@ def count_edges(gray):
 
 
 def run(dataset="provided", limit=None, conditions=CONDITIONS, detectors=DETECTORS,
-        keypoints=True, save_images=5, n_boot=1000, reference=("P1+", "D1")):
+        keypoints=True, save_images=5, n_boot=1000, reference=("P1+", "D1"), roi="bottom_half"):
     name, folder, images = list_images(dataset)
     images = images[:limit] if limit else images
     gt_loader = load_gt(dataset, name)
-    cfg_a = validate_config({})
+    cfg_a = validate_config({"roi": roi})
     sift = cv2.SIFT_create() if keypoints else None
 
     run_dir = new_run_dir(OUTPUT_DIR / "pipeline")
     rows = []
-    print(f"{name}: {len(images)}장 × 조건 {len(conditions)} × 검출기 {len(detectors)} → {run_dir}", flush=True)
+    print(f"{name}: {len(images)}장 × 조건 {len(conditions)} × 검출기 {len(detectors)} · ROI {roi} → {run_dir}", flush=True)
 
     for i, path in enumerate(images, 1):
         try:
@@ -245,9 +245,11 @@ def main():
     p.add_argument("--save-images", type=int, default=5, help="결과 그림 저장 장수 (0 = 안 함, -1 = 전부)")
     p.add_argument("--bootstrap", type=int, default=1000, help="F1 오차 범위 부트스트랩 횟수 (0 = 안 함)")
     p.add_argument("--reference", default="P1+/D1", help="차이를 잴 기준 조건 '전처리/검출기' (기본: 1차 최종 후보)")
+    p.add_argument("--roi", default="bottom_half",
+                   help="노면 영역: bottom_half(기본) / full(전체) / bottom_<N>(아래쪽 N%%만, 예: bottom_60)")
     a = p.parse_args()
     run(a.dataset, a.limit, tuple(a.conditions), tuple(a.detectors), not a.no_keypoints, a.save_images,
-        a.bootstrap, tuple(a.reference.split("/")))
+        a.bootstrap, tuple(a.reference.split("/")), a.roi)
 
 
 if __name__ == "__main__":

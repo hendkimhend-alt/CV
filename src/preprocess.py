@@ -53,13 +53,24 @@ def check_number(value, label, minimum=0, integer=False, strict=False):
         raise ValueError(f"error:{label} 값 또는 범위 오류")
 
 
+# 기능: "bottom_<N>" 형식이면 N(사진 아래쪽에서 남길 높이 %, 1~100)을 돌려준다. 아니면 None.
+# 특징: bottom_half는 기존 결과를 그대로 재현하려고 따로 둔다 (bottom_50과 홀수 높이에서 1픽셀 다를 수 있음).
+def roi_bottom_percent(roi):
+    if not isinstance(roi, str) or not roi.startswith("bottom_") or roi == "bottom_half":
+        return None
+    text = roi[len("bottom_"):]
+    if not text.isdigit() or not 1 <= int(text) <= 100:
+        raise ValueError("error:ROI bottom_<N>의 N은 1~100 정수 (아래쪽에서 남길 높이 %)")
+    return int(text)
+
+
 # 기능: ROI 형식과 좌표·크기를 검사한다.
 # 특징: 이미지 경계 검사는 실제 해상도를 아는 geometry_preprocess에서 수행한다.
 def check_roi(roi):
-    if isinstance(roi, str) and roi in {"bottom_half", "full"}:
+    if isinstance(roi, str) and (roi in {"bottom_half", "full"} or roi_bottom_percent(roi)):
         return
     if not isinstance(roi, list) or len(roi) != 4:
-        raise ValueError("error:ROI는 bottom_half/full 또는 [x,y,width,height]")
+        raise ValueError("error:ROI는 bottom_half/full/bottom_<N> 또는 [x,y,width,height]")
     for index, value in enumerate(roi):
         check_number(value, "roi", 0 if index < 2 else 1, integer=True)
 
@@ -179,6 +190,9 @@ def geometry_preprocess(img, cfg, image_id=""):
         x, y, width, height = 0, original_h // 2, original_w, original_h - original_h // 2
     elif roi == "full":
         x, y, width, height = 0, 0, original_w, original_h
+    elif roi_bottom_percent(roi):
+        height = max(1, round(original_h * roi_bottom_percent(roi) / 100))
+        x, y, width = 0, original_h - height, original_w
     else:
         x, y, width, height = roi
     if x + width > original_w or y + height > original_h:
