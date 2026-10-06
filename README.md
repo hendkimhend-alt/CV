@@ -35,13 +35,17 @@ pip install -r requirements.txt
 python src/run_pipeline.py                     # 제공 13장 × P0/P1/P1+ × D0/D1
 python src/run_pipeline.py --dataset rdd_dev   # RDD 개발 세트 563장 — 값(ROI·기준값·파라미터) 고르기는 여기서만
 python src/run_pipeline.py --dataset rdd_test  # RDD 테스트 세트 241장 — 최종 설정이 정해진 뒤 한 번만
-python src/run_pipeline.py --dataset rdd       # RDD 804장 전체 — 정답 있음 → precision·recall (약 3분)
+python src/run_pipeline.py --dataset rdd       # RDD 804장 전체 — 정답 있음 → precision·recall·F1 (약 3분)
 python src/run_pipeline.py --dataset rdd_dev --limit 50 --no-keypoints   # 빠르게 확인
 ```
 
 → `outputs/pipeline/run_<시각>/` 에 `results.csv`(사진×조건×검출기), `summary.csv`(조건×검출기×그룹), `images/`(결과 박스, 정답은 초록)
 RDD는 **dev 70% / test 30%로 나눠 쓴다** (`labels/split_rdd.csv`, 기준·규칙은 [`labels/README.md`](labels/README.md)). test를 보고 값을 고치면 test가 아니게 되므로, 실험은 `rdd_dev`로 한다.
-제공 13장·촬영분은 정답 CSV가 `labels/provided.csv`, `labels/captured.csv`에 생기면 자동으로 precision·recall까지 계산한다 ([`labels/README.md`](labels/README.md)).
+제공 13장·촬영분은 정답 CSV가 `labels/provided.csv`, `labels/captured.csv`에 생기면 자동으로 precision·recall·F1까지 계산한다 ([`labels/README.md`](labels/README.md)).
+
+**평가 지표** — 개선 판정은 박스 단위 **F1** 하나로 한다 (`src/evaluate.py`). 정답 판정 기준 3개를 모두 기록한다:
+`iou50` IoU > 0.5 (표준, RDD 대회와 같은 정의) / `iou30` IoU > 0.3 / `in50` 후보 면적의 절반 이상이 정답 박스 안 (같은 정답 안의 추가 조각은 제외).
+기준선에서 "조건 간 차이를 오차 범위보다 크게 구분하는 기준 중 가장 엄격한 것"을 골라 이후 실험에 고정한다.
 
 **단계별**
 
