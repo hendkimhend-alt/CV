@@ -15,6 +15,14 @@ from evaluate import CRITERIA, KINDS
 SEED = 20261006
 
 
+def row_tags(r):
+    """한 행이 속하는 집계 묶음: 전체 + 품질 그룹 + 시점(있으면 vp_<시점>)."""
+    tags = ["all", *r["group"].split(";")]
+    if r.get("viewpoint"):
+        tags.append(f"vp_{r['viewpoint']}")
+    return tags
+
+
 def _f1(tp, fp, fn):
     with np.errstate(divide="ignore", invalid="ignore"):
         return np.where(2 * tp + fp + fn > 0, 2 * tp / (2 * tp + fp + fn), np.nan)
@@ -29,7 +37,7 @@ def bootstrap(rows, reference, n_boot=1000):
     configs = sorted({(r["condition"], r["detector"]) for r in rows})
     by_group = defaultdict(set)
     for r in rows:
-        for g in ("all", *r["group"].split(";")):
+        for g in row_tags(r):
             by_group[g].add(r["image"])
     table = {(r["image"], r["condition"], r["detector"]): r for r in rows}
     rng = np.random.default_rng(SEED)
