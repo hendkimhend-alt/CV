@@ -3,6 +3,7 @@
 
 정답 박스는 원본 이미지 좌표 (type, x1, y1, x2, y2), type은 "crack" / "pothole".
 - RDD2020: <RDD_DIR>/ann/<이미지명>.json (Supervisely). 균열 3종 → crack, pothole → pothole, 그 외(other corruption)는 제외
+- RDD 분할: rdd_dev(70%) / rdd_test(30%) — labels/split_rdd.csv (analysis/make_split.py). 값 고르기는 dev에서만, test는 마지막에 한 번
 - 제공 13장·직접 촬영분: labels/<데이터 이름>.csv (열: image, x, y, w, h, type) — 문서 담당이 만드는 정답 CSV
   labels/는 git에 올라가 팀이 공유한다 (data/는 안 올라감). 파일이 없으면 정답 없음 → 평가 칸은 비고 나머지 지표만 기록
 """
@@ -20,6 +21,11 @@ DATASETS = {"provided": PROVIDED_DIR, "captured": CAPTURED_DIR, "rdd": RDD_DIR /
 
 def list_images(dataset):
     """dataset 이름(provided / captured / rdd) 또는 폴더 경로 → (이름, 이미지 경로 목록)."""
+    if dataset in ("rdd_dev", "rdd_test"):
+        _, folder, images = list_images("rdd")
+        with (LABELS_DIR / "split_rdd.csv").open(encoding="utf-8", newline="") as f:
+            keep = {r["image"] for r in csv.DictReader(f) if r["split"] == dataset[4:]}
+        return dataset, folder, [p for p in images if p.name in keep]
     folder = Path(DATASETS.get(dataset, dataset))
     if not folder.is_dir():
         raise ValueError(f"error:이미지 폴더 없음 {folder}")
@@ -31,7 +37,7 @@ def list_images(dataset):
 
 def load_gt(dataset, name):
     """정답 로더를 돌려준다: loader(image_path) -> list[(type, x1, y1, x2, y2)] 또는 None(정답 없음)."""
-    if dataset == "rdd":
+    if dataset.startswith("rdd"):
         def rdd(path):
             ann = RDD_DIR / "ann" / f"{path.name}.json"
             if not ann.exists():

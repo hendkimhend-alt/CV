@@ -170,7 +170,7 @@ def print_table(summary):
 
 def main():
     p = argparse.ArgumentParser(description="전체 실행: 전처리(A) → 검출(B) → 평가")
-    p.add_argument("--dataset", default="provided", help="provided / captured / rdd 또는 폴더 경로")
+    p.add_argument("--dataset", default="provided", help="provided / captured / rdd / rdd_dev / rdd_test 또는 폴더 경로")
     p.add_argument("--limit", type=int, help="처음 N장만")
     p.add_argument("--conditions", nargs="+", default=list(CONDITIONS), choices=CONDITIONS)
     p.add_argument("--detectors", nargs="+", default=list(DETECTORS), choices=DETECTORS)
