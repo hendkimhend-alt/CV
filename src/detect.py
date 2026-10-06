@@ -7,7 +7,7 @@ detect(img, cfg) -> list[{bbox, type, area, length, width, elong, contrast, bran
 혼자 돌릴 때는 run_detect.py의 prepare()가 같은 처리를 해 준다.
 
 - D0 (비교 기준): Canny → Closing
-- D1: 균열 branch   Black-hat(작은 커널) → [선 열림] → 이중 임계값 → Closing
+- D1: 균열 branch   Black-hat(작은 커널) → [선 열림] → 이중 임계값 → Closing → [조각 잇기]
       포트홀 branch Adaptive Threshold(큰 블록) → Opening
 - 공통: 연결 요소 → [가까운 조각 묶기] → 형태 특징 → 규칙으로 crack / pothole / noise → [가장자리 제외]
         → [양쪽 확인: 균열 후보가 "양쪽 주변보다 모두" 어두운가 — 한쪽만 밝은 계단(그림자 경계 · 차선 옆)은 noise]
@@ -66,6 +66,13 @@ DEFAULT_CFG = {
     "valley_gap": 2,             # 선 폭의 절반 + 이만큼 바깥을 "옆"으로 봄 (px)
     "valley_samples": 40,        # 후보마다 재는 위치 수
     "valley_radius": 7,          # 위치마다 선 방향을 구할 주변 반경 (px)
+
+    # 조각 잇기 — 균열이 조각으로 끊겨 "너무 작음"으로 버려지는 것을 막음 (판정 전에 잇는다)
+    # 조각 뼈대의 끝점끼리, 가깝고(link_dist 이내) 서로를 향하는(link_angle 이내) 것만 선으로 이음
+    # → 방향이 제각각인 노면 질감 조각은 안 이어짐 (밝기만 보고 잇는 이중 임계값 완화와 다른 점)
+    "link_dist": 0,              # 0 = 끔 (실험: 검출기 이름 뒤 l — D1vl). 긴 변 1024 기준 px
+    "link_angle": 30,            # 끝점의 바깥 방향과 상대 끝점 쪽 방향의 최대 각도 (도)
+    "link_radius": 6,            # 끝점의 바깥 방향을 구할 주변 뼈대 반경 (px)
 }
 
 
@@ -118,7 +125,60 @@ def _crack_mask(gray, cfg):
         binary = cv2.adaptiveThreshold(bh, 255, cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY,
                                        cfg["crack_block"], cfg["crack_C"])
         hi = max(float(bh.max()), 1.0)
-    return cv2.morphologyEx(binary, cv2.MORPH_CLOSE, _kernel(cfg["crack_close_ksize"])), bh, hi
+    binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, _kernel(cfg["crack_close_ksize"]))
+    if cfg["link_dist"] > 0:
+        binary = link_fragments(binary, cfg)
+    return binary, bh, hi
+
+
+def link_fragments(binary, cfg):
+    """끊긴 균열 조각 잇기 — ① 세선화 ② 끝점(이웃 1개) ③ 끝점의 바깥 방향(끝점 − 주변 뼈대 평균)
+    ④ 다른 조각의 끝점 중 거리 ≤ link_dist 이고 두 끝점이 서로를 향하는(각도 ≤ link_angle) 쌍을
+    가까운 순서로 하나씩 고름 ⑤ 선(두께 2)으로 이음. 균열처럼 일직선으로 줄지은 조각만 이어진다."""
+    skel = cv2.ximgproc.thinning(binary)
+    on = (skel > 0).astype(np.uint8)
+    nbr = cv2.filter2D(on, cv2.CV_16S, np.array([[1, 1, 1], [1, 0, 1], [1, 1, 1]], np.int16))
+    ys, xs = np.nonzero((on == 1) & (nbr == 1))
+    if len(xs) < 2:
+        return binary
+    _, labels = cv2.connectedComponents(on, connectivity=8)
+    r = cfg["link_radius"]
+    H, W = on.shape
+    pts, dirs, labs = [], [], []
+    for x, y in zip(xs, ys):
+        y1, y2, x1, x2 = max(0, y - r), min(H, y + r + 1), max(0, x - r), min(W, x + r + 1)
+        win = labels[y1:y2, x1:x2] == labels[y, x]
+        wy, wx = np.nonzero(win)
+        if len(wx) < 3:
+            continue
+        v = np.array([x - (wx.mean() + x1), y - (wy.mean() + y1)], np.float32)
+        n = float(np.hypot(*v))
+        if n < 1e-3:
+            continue
+        pts.append((x, y))
+        dirs.append(v / n)
+        labs.append(labels[y, x])
+    if len(pts) < 2:
+        return binary
+    P, U, Lb = np.array(pts, np.float32), np.array(dirs, np.float32), np.array(labs)
+    D = P[None, :, :] - P[:, None, :]                       # D[i, j] = j − i
+    dist = np.hypot(D[..., 0], D[..., 1])
+    with np.errstate(invalid="ignore", divide="ignore"):
+        V = D / dist[..., None]
+    cos = np.cos(np.radians(cfg["link_angle"]))
+    ok = ((dist > 0) & (dist <= cfg["link_dist"]) & (Lb[:, None] != Lb[None, :])
+          & ((U[:, None, :] * V).sum(-1) >= cos)            # i의 바깥 방향이 j 쪽을 향함
+          & ((U[None, :, :] * -V).sum(-1) >= cos))          # j의 바깥 방향이 i 쪽을 향함
+    ii, jj = np.nonzero(np.triu(ok))
+    out = binary.copy()
+    used = set()
+    for k in np.argsort(dist[ii, jj], kind="stable"):
+        i, j = int(ii[k]), int(jj[k])
+        if i in used or j in used:
+            continue
+        used.update((i, j))
+        cv2.line(out, tuple(int(v) for v in P[i]), tuple(int(v) for v in P[j]), 255, 2)
+    return out
 
 
 def _line_open(bh, length, n_angles):
