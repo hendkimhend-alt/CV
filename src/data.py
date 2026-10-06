@@ -4,6 +4,8 @@
 정답 박스는 원본 이미지 좌표 (type, x1, y1, x2, y2), type은 "crack" / "pothole".
 - RDD2020: <RDD_DIR>/ann/<이미지명>.json (Supervisely). 균열 3종 → crack, pothole → pothole, 그 외(other corruption)는 제외
 - RDD 분할: rdd_dev(70%) / rdd_test(30%) — labels/split_rdd.csv (analysis/make_split.py). 값 고르기는 dev에서만, test는 마지막에 한 번
+- RDD 시점: labels/viewpoint_rdd.csv (far = 원경 있음 / road_full = 노면 가득 / ambiguous) — **결과를 나눠 보는 분석용**.
+  검출 방법은 이 라벨을 보지 않는다 (새 사진엔 라벨이 없으므로)
 - 제공 13장·직접 촬영분: labels/<데이터 이름>.csv (열: image, x, y, w, h, type) — 문서 담당이 만드는 정답 CSV
   labels/는 git에 올라가 팀이 공유한다 (data/는 안 올라감). 파일이 없으면 정답 없음 → 평가 칸은 비고 나머지 지표만 기록
 """
@@ -33,6 +35,15 @@ def list_images(dataset):
                     and not any(part.startswith(".") for part in p.relative_to(folder).parts))
     name = dataset if dataset in DATASETS else folder.name
     return name, folder, images
+
+
+def load_viewpoints(dataset):
+    """RDD면 {이미지 파일명: 시점} (labels/viewpoint_rdd.csv), 아니면 빈 사전. 결과 집계용."""
+    path = LABELS_DIR / "viewpoint_rdd.csv"
+    if not dataset.startswith("rdd") or not path.exists():
+        return {}
+    with path.open(encoding="utf-8", newline="") as f:
+        return {r["image"]: r["viewpoint"] for r in csv.DictReader(f)}
 
 
 def load_gt(dataset, name):

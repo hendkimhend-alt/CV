@@ -11,6 +11,8 @@
   → 오검출: FPPI = 사진 1장당 FP (판정 기준별) / 깨끗한 노면 FPPI = 손상 라벨이 없는 사진 1장당 후보 수
   → 오차 범위: 사진 단위 부트스트랩으로 F1 95% 범위, 기준 조건(--reference, 기본 P1+/D1) 대비 차이 (stats)
   → 진단용 구분력: 정답 박스 TPR − 옆 노면 대조 박스 FPR (판정에는 안 씀, evaluate.separation)
+  → 집계 묶음: 전체 / 품질 그룹 / RDD면 시점(vp_far · vp_road_full · vp_ambiguous, labels/viewpoint_rdd.csv)
+    시점 라벨은 결과를 나눠 보는 데만 쓰고 검출 방법은 보지 않는다
 
 출력 (outputs/pipeline/run_<시각>/):
   results.csv   사진 × 조건 × 검출기 한 줄씩
@@ -35,12 +37,12 @@ from datetime import datetime, timedelta, timezone
 import cv2
 import numpy as np
 
-from data import list_images, load_gt
+from data import list_images, load_gt, load_viewpoints
 from detect import DEFAULT_CFG as DETECT_CFG, detect
 from evaluate import CRITERIA, KINDS, count_cut, evaluate, prf, separation, transform_gt
 from metrics import measure_quality
 from paths import OUTPUT_DIR, imread, imwrite
-from stats import bootstrap
+from stats import bootstrap, row_tags
 from preprocess import CONDITIONS, classify_quality, geometry_preprocess, preprocess_condition, validate_config
 from visualize import draw_detections
 
@@ -72,6 +74,7 @@ def run(dataset="provided", limit=None, conditions=CONDITIONS, detectors=DETECTO
     name, folder, images = list_images(dataset)
     images = images[:limit] if limit else images
     gt_loader = load_gt(dataset, name)
+    viewpoints = load_viewpoints(dataset)
     cfg_a = validate_config({})
     sift = cv2.SIFT_create() if keypoints else None
 
@@ -108,7 +111,8 @@ def run(dataset="provided", limit=None, conditions=CONDITIONS, detectors=DETECTO
                 t0 = time.perf_counter()
                 dets = detect(fixed, {"detector": det_name})
                 det_ms = (time.perf_counter() - t0) * 1000
-                row = {"image": path.name, "dataset": name, "group": ";".join(tags), "condition": cond,
+                row = {"image": path.name, "dataset": name, "group": ";".join(tags),
+                       "viewpoint": viewpoints.get(path.name, ""), "condition": cond,
                        "detector": det_name, "preprocess_ms": round(pre_ms, 2), "detect_ms": round(det_ms, 2),
                        "n_edges": n_edges, "n_keypoints": n_kp, "has_gt": gt_t is not None,
                        "clean": gt is not None and len(gt) == 0}      # 원본에 손상 라벨이 하나도 없는 사진
@@ -168,7 +172,7 @@ def run(dataset="provided", limit=None, conditions=CONDITIONS, detectors=DETECTO
 def summarize(rows):
     buckets = defaultdict(list)
     for r in rows:
-        for g in ("all", *r["group"].split(";")):
+        for g in row_tags(r):
             buckets[(r["condition"], r["detector"], g)].append(r)
     numeric = ["preprocess_ms", "detect_ms", "n_edges", "n_keypoints", *QUALITY_KEYS,
                *(f"{p}_{k}" for k in KINDS for p in ("n", "area"))]
