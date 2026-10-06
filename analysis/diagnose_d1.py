@@ -9,7 +9,7 @@
    정답 걸침(정답 박스에 일부 겹침 — 라벨이 좁았을 가능성) → 노면 밖(도로다움 없음 · 초록) → 페인트 옆
    (흰색 · 노란색 ±6px) → 그림자 · 조명 경계(조명 배경 기울기 큼) → 노면 위 기타(짧은 조각 / 긴 것)
 출력: outputs/analysis/diagnose_d1.md + 출처별 · 단계별 샘플 그림
-실행: python analysis/diagnose_d1.py [--valley-ratio 0.35] [--limit N]
+실행: python analysis/diagnose_d1.py [--valley-ratio 0.35] [--crack-lo-ratio 0.5] [--limit N]
 """
 import argparse, json, os, sys
 from collections import Counter, defaultdict
@@ -84,11 +84,13 @@ def candidates(ref, cfg):
     return out
 
 
-def run(ratio, limit):
+def run(ratio, limit, lo_ratio=None):
     name, _, images = list_images("rdd_dev")
     images = images[:limit] if limit else images
     pcfg = validate_config({"roi": "auto"})
     dcfg = {**DEFAULT_CFG, "valley_check": True, "valley_min_ratio": ratio}
+    if lo_ratio is not None:
+        dcfg["crack_lo_ratio"] = lo_ratio
     lost = Counter(); lost_by = defaultdict(Counter); n_gt = Counter()
     fp = Counter(); fp_len = []; n_img = 0
     samples = defaultdict(list)
@@ -201,9 +203,10 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--valley-ratio", type=float, default=0.35)
     ap.add_argument("--limit", type=int)
+    ap.add_argument("--crack-lo-ratio", type=float, help="D1 이중 임계값 약한 기준 비율 (기본 0.5)")
     a = ap.parse_args()
-    lost, lost_by, n_gt, fp, n_img, samples = run(a.valley_ratio, a.limit)
-    out = OUTPUT_DIR / "analysis" / "diagnose_d1"
+    lost, lost_by, n_gt, fp, n_img, samples = run(a.valley_ratio, a.limit, a.crack_lo_ratio)
+    out = OUTPUT_DIR / "analysis" / ("diagnose_d1" + (f"_lo{a.crack_lo_ratio}" if a.crack_lo_ratio else ""))
     out.mkdir(parents=True, exist_ok=True)
     md = report(lost, lost_by, n_gt, fp, n_img, a.valley_ratio)
     (out / "diagnose_d1.md").write_text(md, encoding="utf-8")
