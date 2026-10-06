@@ -112,7 +112,9 @@ def run(dataset="provided", limit=None, conditions=CONDITIONS, detectors=DETECTO
                 dets = detect(fixed, {"detector": det_name})
                 det_ms = (time.perf_counter() - t0) * 1000
                 row = {"image": path.name, "dataset": name, "group": ";".join(tags),
-                       "viewpoint": viewpoints.get(path.name, ""), "condition": cond,
+                       "viewpoint": viewpoints.get(path.name, ""),
+                       "roi_top": round(geometry["crop_y"] / geometry["original_height"], 4),   # 잘라 낸 위쪽 비율
+                       "condition": cond,
                        "detector": det_name, "preprocess_ms": round(pre_ms, 2), "detect_ms": round(det_ms, 2),
                        "n_edges": n_edges, "n_keypoints": n_kp, "has_gt": gt_t is not None,
                        "clean": gt is not None and len(gt) == 0}      # 원본에 손상 라벨이 하나도 없는 사진
@@ -250,7 +252,7 @@ def main():
     p.add_argument("--bootstrap", type=int, default=1000, help="F1 오차 범위 부트스트랩 횟수 (0 = 안 함)")
     p.add_argument("--reference", default="P1+/D1", help="차이를 잴 기준 조건 '전처리/검출기' (기본: 1차 최종 후보)")
     p.add_argument("--roi", default="bottom_half",
-                   help="노면 영역: bottom_half(기본) / full(전체) / bottom_<N>(아래쪽 N%%만, 예: bottom_60)")
+                   help="노면 영역: bottom_half(기본) / full(전체) / bottom_<N>(아래쪽 N%%만, 예: bottom_60) / auto(사진마다 도로 시작 높이)")
     a = p.parse_args()
     run(a.dataset, a.limit, tuple(a.conditions), tuple(a.detectors), not a.no_keypoints, a.save_images,
         a.bootstrap, tuple(a.reference.split("/")), a.roi)
