@@ -84,13 +84,14 @@ def candidates(ref, cfg):
     return out
 
 
-def run(ratio, limit, lo_ratio=None):
+def run(ratio, limit, lo_ratio=None, link_dist=0):
     name, _, images = list_images("rdd_dev")
     images = images[:limit] if limit else images
     pcfg = validate_config({"roi": "auto"})
     dcfg = {**DEFAULT_CFG, "valley_check": True, "valley_min_ratio": ratio}
     if lo_ratio is not None:
         dcfg["crack_lo_ratio"] = lo_ratio
+    dcfg["link_dist"] = link_dist
     lost = Counter(); lost_by = defaultdict(Counter); n_gt = Counter()
     fp = Counter(); fp_len = []; n_img = 0
     samples = defaultdict(list)
@@ -204,9 +205,10 @@ if __name__ == "__main__":
     ap.add_argument("--valley-ratio", type=float, default=0.35)
     ap.add_argument("--limit", type=int)
     ap.add_argument("--crack-lo-ratio", type=float, help="D1 이중 임계값 약한 기준 비율 (기본 0.5)")
+    ap.add_argument("--link-dist", type=int, default=0, help="조각 잇기 거리 (0 = 끔)")
     a = ap.parse_args()
-    lost, lost_by, n_gt, fp, n_img, samples = run(a.valley_ratio, a.limit, a.crack_lo_ratio)
-    out = OUTPUT_DIR / "analysis" / ("diagnose_d1" + (f"_lo{a.crack_lo_ratio}" if a.crack_lo_ratio else ""))
+    lost, lost_by, n_gt, fp, n_img, samples = run(a.valley_ratio, a.limit, a.crack_lo_ratio, a.link_dist)
+    out = OUTPUT_DIR / "analysis" / ("diagnose_d1" + (f"_lo{a.crack_lo_ratio}" if a.crack_lo_ratio else "") + (f"_link{a.link_dist}" if a.link_dist else ""))
     out.mkdir(parents=True, exist_ok=True)
     md = report(lost, lost_by, n_gt, fp, n_img, a.valley_ratio)
     (out / "diagnose_d1.md").write_text(md, encoding="utf-8")
