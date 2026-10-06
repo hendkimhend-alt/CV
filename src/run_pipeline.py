@@ -9,6 +9,7 @@
   → 정답이 있으면 판정 기준 3개(iou50 / iou30 / in50)로 TP·FP·FN → precision·recall·F1 (evaluate)
   → 오검출: FPPI = 사진 1장당 FP (판정 기준별) / 깨끗한 노면 FPPI = 손상 라벨이 없는 사진 1장당 후보 수
   → 오차 범위: 사진 단위 부트스트랩으로 F1 95% 범위, 기준 조건(--reference, 기본 P1+/D1) 대비 차이 (stats)
+  → 진단용 구분력: 정답 박스 TPR − 옆 노면 대조 박스 FPR (판정에는 안 씀, evaluate.separation)
 
 출력 (outputs/pipeline/run_<시각>/):
   results.csv   사진 × 조건 × 검출기 한 줄씩
@@ -35,7 +36,7 @@ import numpy as np
 
 from data import list_images, load_gt
 from detect import DEFAULT_CFG as DETECT_CFG, detect
-from evaluate import CRITERIA, KINDS, evaluate, prf, transform_gt
+from evaluate import CRITERIA, KINDS, evaluate, prf, separation, transform_gt
 from metrics import measure_quality
 from paths import OUTPUT_DIR, imread, imwrite
 from stats import bootstrap
@@ -119,6 +120,8 @@ def run(dataset="provided", limit=None, conditions=CONDITIONS, detectors=DETECTO
                         row[f"{kind}_n_gt"] = e["n_gt"]
                         for c in CRITERIA:
                             row.update({f"{kind}_{c}_{k}": v for k, v in e[c].items()})
+                    for kind, e in separation(dets, gt_t, fixed.shape[1], fixed.shape[0]).items():
+                        row.update({f"{kind}_sep_{k}": v for k, v in e.items()})
                 rows.append(row)
 
                 if save_images < 0 or i <= save_images:
@@ -183,6 +186,12 @@ def summarize(rows):
                     item[f"{kind}_{c}_{name}"] = None if v is None else round(v, 4)
                 item[f"{kind}_{c}_fppi"] = round(fp / len(with_gt), 4) if with_gt else None
             item[f"{kind}_clean_fppi"] = round(sum(r[f"n_{kind}"] for r in clean) / len(clean), 4) if clean else None
+            n = sum(r[f"{kind}_sep_n"] for r in with_gt)
+            if n:
+                tpr = sum(r[f"{kind}_sep_hit"] for r in with_gt) / n
+                fpr = sum(r[f"{kind}_sep_fhit"] for r in with_gt) / n
+                item.update({f"{kind}_sep_tpr": round(tpr, 4), f"{kind}_sep_fpr": round(fpr, 4),
+                             f"{kind}_separation": round(tpr - fpr, 4)})
         out.append(item)
     return out
 

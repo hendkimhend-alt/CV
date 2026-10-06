@@ -13,12 +13,19 @@
       iou50 · iou30은 표준대로 짝을 못 찾은 후보(중복 조각 포함)는 모두 FP.
       recall = TP / 정답 수, precision = TP / (TP + FP), F1 = 둘의 조화평균
 좌표는 둘 다 같은 좌표계(전처리 후 노면 영역)여야 한다 → transform_gt()로 맞춘다.
+
+진단용 — 구분력 (separation(), 판정에는 안 씀. 실패 원인 분석용)
+- 정답 박스마다 바로 옆 노면(좌·우·아래·위, 어떤 정답과도 안 겹침)에 같은 크기 대조 박스를 둔다
+- 후보 면적의 50% 이상이 박스 안이면 그 박스 소속 (analysis/eval_detector.py와 같은 규칙)
+- 구분력 = 정답 박스에 같은 종류 후보가 나온 비율(TPR) − 대조 박스에 나온 비율(FPR)
+  → 통계의 Youden's J(민감도 + 특이도 − 1)와 같은 형태. 0 = 손상과 옆 노면을 못 가림
 """
 
 KINDS = ("crack", "pothole")
 CRITERIA = ("iou50", "iou30", "in50")
 IOU_THRESHOLDS = {"iou50": 0.5, "iou30": 0.3}
 INSIDE_FRAC = 0.5           # in50: 후보 면적 중 정답 박스 안 비율
+SEP_MIN_BOX_AREA = 400      # 구분력: 이보다 작은 정답 박스는 대조 박스를 두지 않음 (eval_detector와 같음)
 
 
 def transform_gt(boxes, geometry):
@@ -118,3 +125,41 @@ def prf(tp, fp, fn):
     if p is None or r is None:
         return p, r, None
     return p, r, (2 * p * r / (p + r) if p + r else 0.0)
+
+
+def _control_box(box, boxes, W, H):
+    """정답 박스 바로 옆(좌·우·아래·위 순)에 같은 크기, 어떤 정답과도 안 겹치는 대조 박스. 없으면 None."""
+    x1, y1, x2, y2 = box
+    bw, bh = x2 - x1, y2 - y1
+    for cx, cy in [(x1 - bw, y1), (x2, y1), (x1, y2), (x1, y1 - bh)]:
+        if cx < 0 or cy < 0 or cx + bw > W or cy + bh > H:
+            continue
+        if all(cx + bw <= b[0] or cx >= b[2] or cy + bh <= b[1] or cy >= b[3] for b in boxes):
+            return (cx, cy, cx + bw, cy + bh)
+    return None
+
+
+def _has_member(dets, region):
+    """region 안에 면적의 50% 이상이 들어간 후보가 있나."""
+    return any(_inter(d, region) >= INSIDE_FRAC * max(_area(d), 1.0) for d in dets)
+
+
+def separation(detections, gt_boxes, W, H):
+    """진단용 구분력 재료 (사진 한 장) → {kind: {"n": 대조 박스를 둔 정답 수, "hit": 정답 쪽 검출, "fhit": 대조 쪽 검출}}"""
+    all_boxes = [tuple(g[1:]) for g in gt_boxes]
+    res = {}
+    for kind in KINDS:
+        dets = [_xyxy(d["bbox"]) for d in detections if d["type"] == kind]
+        n = hit = fhit = 0
+        for g in gt_boxes:
+            box = tuple(g[1:])
+            if g[0] != kind or _area(box) < SEP_MIN_BOX_AREA:
+                continue
+            ctl = _control_box(box, all_boxes, W, H)
+            if ctl is None:
+                continue
+            n += 1
+            hit += _has_member(dets, box)
+            fhit += _has_member(dets, ctl)
+        res[kind] = {"n": n, "hit": hit, "fhit": fhit}
+    return res
