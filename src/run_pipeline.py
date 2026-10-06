@@ -3,7 +3,8 @@
 
 사진마다:
   노면 영역·1024 (A geometry_preprocess) → 보정 전 지표로 그룹 분류 (흐림 / 국소 조도 / 정상)
-  → 조건 P0 / P1 / P1+ 보정 (A preprocess_condition) → 품질 지표 (A measure_quality)
+  → 조건별 보정 (A preprocess_condition) → 품질 지표 (A measure_quality)
+    조건 = 미리 정한 묶음(P0_reference / P1 / P1+) 또는 켤 단계를 +로 이은 것(예: gamma+gaussian, none)
   → 검출기 D0 / D1 (B detect)
   → 과제 비교 항목: 에지 수, 특징점 수(SIFT), 후보 수·면적, 처리 시간
   → 정답이 있으면 판정 기준 3개(iou50 / iou30 / in50)로 TP·FP·FN → precision·recall·F1 (evaluate)
@@ -46,7 +47,7 @@ from evaluate import CRITERIA, KINDS, count_cut, evaluate, prf, separation, tran
 from metrics import measure_quality
 from paths import OUTPUT_DIR, imread, imwrite
 from stats import bootstrap, row_tags
-from preprocess import CONDITIONS, classify_quality, geometry_preprocess, preprocess_condition, validate_config
+from preprocess import CONDITIONS, classify_quality, geometry_preprocess, parse_condition, preprocess_condition, validate_config
 from visualize import draw_detections
 
 DETECTORS = ("D0", "D1")
@@ -74,6 +75,8 @@ def count_edges(gray):
 
 def run(dataset="provided", limit=None, conditions=CONDITIONS, detectors=DETECTORS,
         keypoints=True, save_images=5, n_boot=1000, reference=("P1+", "D1"), roi="bottom_half"):
+    for cond in conditions:
+        parse_condition(cond)                                    # 잘못된 조건 이름은 실행 전에 오류
     name, folder, images = list_images(dataset)
     images = images[:limit] if limit else images
     gt_loader = load_gt(dataset, name)
@@ -178,6 +181,7 @@ def run(dataset="provided", limit=None, conditions=CONDITIONS, detectors=DETECTO
 
 
 def summarize(rows):
+    order = list(dict.fromkeys(r["condition"] for r in rows))     # 조건은 입력한 순서대로
     buckets = defaultdict(list)
     for r in rows:
         for g in row_tags(r):
@@ -185,7 +189,7 @@ def summarize(rows):
     numeric = ["preprocess_ms", "detect_ms", "n_edges", "n_keypoints", *QUALITY_KEYS,
                *(f"{p}_{k}" for k in KINDS for p in ("n", "area"))]
     out = []
-    for (cond, det, group), rs in sorted(buckets.items(), key=lambda kv: (CONDITIONS.index(kv[0][0]), kv[0][1], kv[0][2])):
+    for (cond, det, group), rs in sorted(buckets.items(), key=lambda kv: (order.index(kv[0][0]), kv[0][1], kv[0][2])):
         item = {"condition": cond, "detector": det, "group": group, "n_images": len(rs)}
         for k in numeric:
             vals = [r[k] for r in rs if r.get(k) is not None]
@@ -225,11 +229,11 @@ def write_csv(path, rows):
 
 def print_table(summary):
     fmt = lambda v, p=2: "-" if v is None else f"{v:.{p}f}"
-    print(f"\n{'조건':<13}{'검출':<5}{'에지':>8}{'특징점':>8}{'균열후보':>8}"
+    print(f"\n{'조건':<22}{'검출':<5}{'에지':>8}{'특징점':>8}{'균열후보':>8}"
           + "".join(f"{'균열F1 ' + c:>13}" for c in CRITERIA) + f"{'포트홀F1 in50':>14}{'균열FPPI in50':>14}{'깨끗한노면FPPI':>14}{'전처리ms':>9}")
     for s in summary:
         if s["group"] == "all":
-            print(f"{s['condition']:<13}{s['detector']:<5}{fmt(s['mean_n_edges'], 0):>8}{fmt(s['mean_n_keypoints'], 0):>8}"
+            print(f"{s['condition']:<22}{s['detector']:<5}{fmt(s['mean_n_edges'], 0):>8}{fmt(s['mean_n_keypoints'], 0):>8}"
                   f"{fmt(s['mean_n_crack'], 1):>8}" + "".join(f"{fmt(s[f'crack_{c}_f1']):>13}" for c in CRITERIA)
                   + f"{fmt(s['pothole_in50_f1']):>14}{fmt(s['crack_in50_fppi'], 1):>14}{fmt(s['crack_clean_fppi'], 1):>14}"
                   f"{fmt(s['mean_preprocess_ms'], 1):>9}")
@@ -251,7 +255,8 @@ def main():
     p = argparse.ArgumentParser(description="전체 실행: 전처리(A) → 검출(B) → 평가")
     p.add_argument("--dataset", default="provided", help="provided / captured / rdd / rdd_dev / rdd_test 또는 폴더 경로")
     p.add_argument("--limit", type=int, help="처음 N장만")
-    p.add_argument("--conditions", nargs="+", default=list(CONDITIONS), choices=CONDITIONS)
+    p.add_argument("--conditions", nargs="+", default=list(CONDITIONS),
+                   help="P0_reference / P1 / P1+ 또는 켤 단계를 +로 이은 것 (gamma · clahe · unsharp · gaussian, 예: gamma+gaussian, none)")
     p.add_argument("--detectors", nargs="+", default=list(DETECTORS), choices=DETECTORS)
     p.add_argument("--no-keypoints", action="store_true", help="SIFT 특징점 수 생략 (빠르게)")
     p.add_argument("--save-images", type=int, default=5, help="결과 그림 저장 장수 (0 = 안 함, -1 = 전부)")

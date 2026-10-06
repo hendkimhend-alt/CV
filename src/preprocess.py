@@ -1,4 +1,11 @@
-"""공통 ROI·Resize, 품질값 자동 분류와 세 전처리 조건."""
+"""공통 ROI·Resize, 품질값 자동 분류와 전처리 조건.
+
+조건 = 켤 보정 단계 목록. 단계는 항상 STAGE_ORDER 순서로 적용한다 (입력 순서와 무관).
+- 미리 정한 묶음: P0_reference(없음) · P1(gamma+gaussian) · P1+(gamma+clahe+unsharp+gaussian)
+- 직접 지정: "gamma+gaussian"처럼 단계를 +로 잇는다. "none" = 보정 없음
+- unsharp는 흐림(blur)으로 분류된 사진에만 적용된다 (1차 설계와 같음)
+실험 원칙: 이미 정한 단계는 켜고, 아직 안 정한 단계는 끈다 → 원하는 단계만 켜서 비교할 수 있게
+"""
 
 from __future__ import annotations
 
@@ -11,7 +18,9 @@ from functools import lru_cache
 import cv2
 import numpy as np
 
-CONDITIONS = ("P0_reference", "P1", "P1+")
+CONDITIONS = ("P0_reference", "P1", "P1+")                # 미리 정한 묶음 (A.py 그래프 등에서 사용)
+STAGE_ORDER = ("gamma", "clahe", "unsharp", "gaussian")     # 보정 단계 적용 순서
+PRESETS = {"P0_reference": (), "P1": ("gamma", "gaussian"), "P1+": ("gamma", "clahe", "unsharp", "gaussian")}
 VALID_TAGS = {"blur", "local_illumination", "normal", "unclassified"}
 # 기능: 보정 전 ROI·Resize 영상의 품질값으로 그룹을 자동 결정한다.
 # 특징: 경계값 50·44는 포함하지 않는다. 필요하면 아래 숫자만 수정한다.
@@ -266,17 +275,32 @@ def apply_gaussian(img, cfg):
     return cv2.GaussianBlur(img, (kernel, kernel), cfg["sigma"], borderType=cv2.BORDER_REFLECT_101)
 
 
-# 기능: 공통 기준 영상에서 P0_reference·P1·P1+ 결과와 실제 적용 파라미터를 만든다.
-# 특징: P1+는 모두 CLAHE를 적용하고 자동 분류된 blur에만 Unsharp를 적용한다.
+# 기능: 조건 이름 → 켤 단계 튜플 (STAGE_ORDER 순서).
+# 특징: 묶음 이름(P0_reference·P1·P1+), "none", "gamma+gaussian"처럼 +로 이은 단계를 받는다.
+def parse_condition(condition):
+    if condition in PRESETS:
+        return PRESETS[condition]
+    if not isinstance(condition, str) or not condition.strip():
+        raise ValueError(f"error:알 수 없는 전처리 조건 {condition}")
+    if condition == "none":
+        return ()
+    stages = [part.strip() for part in condition.split("+")]
+    unknown = [part for part in stages if part not in STAGE_ORDER]
+    if unknown or len(set(stages)) != len(stages):
+        raise ValueError(f"error:전처리 조건 {condition} — 단계는 {'/'.join(STAGE_ORDER)} 중 중복 없이 +로 연결")
+    return tuple(stage for stage in STAGE_ORDER if stage in stages)
+
+
+# 기능: 공통 기준 영상에 조건의 단계를 차례로 적용하고 실제 적용 파라미터를 기록한다.
+# 특징: unsharp는 자동 분류된 blur에만 적용한다. 태그가 없으면 기준 영상으로 분류한다.
 #       Gamma 캐시는 이미지마다 새로 만든다. 직접 전달한 태그는 같은 분류 함수의 결과여야 한다.
 def preprocess_condition(reference, cfg, condition, tags=None, gamma_cache=None):
-    if condition not in CONDITIONS:
-        raise ValueError(f"error:알 수 없는 전처리 조건 {condition}")
+    stages = parse_condition(condition)
     params = {name: None for name in PARAMETER_COLUMNS}
     params.update(stages=["ROI", "Resize"], gamma_channel="", clahe_channel="", unsharp_applied=False)
-    if condition == "P0_reference":
+    if not stages:
         return reference.copy(), params
-    if condition == "P1+":
+    if "unsharp" in stages:
         if tags is None:
             # 기능: 단독 호출에서도 runner와 같은 기준 영상으로 자동 분류한다.
             # 특징: metrics의 역방향 import를 피하기 위해 호출 시점에 불러온다.
@@ -288,38 +312,46 @@ def preprocess_condition(reference, cfg, condition, tags=None, gamma_cache=None)
         if not isinstance(tags, (str, tuple, list)) or (not isinstance(tags, str) and any(not isinstance(t, str) for t in tags)):
             raise ValueError("error:품질 태그는 문자열 또는 문자열 목록")
         tags = parse_tags(tags if isinstance(tags, str) else ";".join(tags))
-    if gamma_cache is None:
-        result = apply_gamma(reference, cfg["gamma"]["value"])
-    else:
-        if not isinstance(gamma_cache, dict):
-            raise ValueError("error:Gamma 캐시는 사전이어야 함")
-        # 기능: 캐시가 다른 기준 영상·Gamma에 재사용되면 이전 결과를 제거한다.
-        # 특징: 픽셀 전체를 해시하지 않고 배열 객체와 파라미터를 비교한다. 기준 영상은 수정하지 않는다.
-        if gamma_cache.get("reference") is not reference or gamma_cache.get("gamma") != cfg["gamma"]["value"]:
-            gamma_cache.clear()
-            gamma_cache.update(reference=reference, gamma=cfg["gamma"]["value"])
-        if "image" not in gamma_cache:
-            start = time.perf_counter()
-            gamma_cache["image"] = apply_gamma(reference, cfg["gamma"]["value"])
-            gamma_cache["ms"] = (time.perf_counter() - start) * 1000
-        result = gamma_cache["image"]
-    params["stages"].append("Gamma")
-    params.update(gamma=cfg["gamma"]["value"], gamma_channel="BGR")
-    if condition == "P1+":
-        result = apply_clahe(result, cfg["clahe"])
-        params["stages"].append("CLAHE")
-        params.update(clahe_clip_limit=cfg["clahe"]["clip_limit"],
-                      clahe_tile_width=cfg["clahe"]["tile_grid"][0],
-                      clahe_tile_height=cfg["clahe"]["tile_grid"][1], clahe_channel="LAB_L")
-        if "blur" in tags:
+    result = reference
+    for stage in stages:
+        if stage == "gamma":
+            result = _gamma_cached(reference, cfg, gamma_cache)
+            params["stages"].append("Gamma")
+            params.update(gamma=cfg["gamma"]["value"], gamma_channel="BGR")
+        elif stage == "clahe":
+            result = apply_clahe(result, cfg["clahe"])
+            params["stages"].append("CLAHE")
+            params.update(clahe_clip_limit=cfg["clahe"]["clip_limit"],
+                          clahe_tile_width=cfg["clahe"]["tile_grid"][0],
+                          clahe_tile_height=cfg["clahe"]["tile_grid"][1], clahe_channel="LAB_L")
+        elif stage == "unsharp" and "blur" in tags:
             result = apply_unsharp(result, cfg["unsharp"])
             params["stages"].append("Unsharp")
             params.update(unsharp_applied=True, unsharp_amount=cfg["unsharp"]["amount"],
                           unsharp_sigma=cfg["unsharp"]["sigma"])
-    result = apply_gaussian(result, cfg["gaussian"])
-    params["stages"].append("Gaussian")
-    params.update(gaussian_kernel=cfg["gaussian"]["kernel"], gaussian_sigma=cfg["gaussian"]["sigma"])
-    return result, params
+        elif stage == "gaussian":
+            result = apply_gaussian(result, cfg["gaussian"])
+            params["stages"].append("Gaussian")
+            params.update(gaussian_kernel=cfg["gaussian"]["kernel"], gaussian_sigma=cfg["gaussian"]["sigma"])
+    return (result.copy() if result is reference else result), params
+
+
+# 기능: 기준 영상의 Gamma 결과 (gamma는 STAGE_ORDER 첫 단계라 항상 기준 영상에 적용된다).
+# 특징: 캐시가 다른 기준 영상·Gamma에 재사용되면 이전 결과를 제거한다. 픽셀 전체를 해시하지 않고
+#       배열 객체와 파라미터를 비교한다. 기준 영상은 수정하지 않는다.
+def _gamma_cached(reference, cfg, gamma_cache):
+    if gamma_cache is None:
+        return apply_gamma(reference, cfg["gamma"]["value"])
+    if not isinstance(gamma_cache, dict):
+        raise ValueError("error:Gamma 캐시는 사전이어야 함")
+    if gamma_cache.get("reference") is not reference or gamma_cache.get("gamma") != cfg["gamma"]["value"]:
+        gamma_cache.clear()
+        gamma_cache.update(reference=reference, gamma=cfg["gamma"]["value"])
+    if "image" not in gamma_cache:
+        start = time.perf_counter()
+        gamma_cache["image"] = apply_gamma(reference, cfg["gamma"]["value"])
+        gamma_cache["ms"] = (time.perf_counter() - start) * 1000
+    return gamma_cache["image"]
 
 
 # 기능: 다음 역할에서 이미지 한 장을 보정할 수 있도록 preprocess(img, cfg) 인터페이스를 제공한다.
