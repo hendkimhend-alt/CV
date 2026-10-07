@@ -89,6 +89,10 @@ DEFAULT_CFG = {
     # 노면 위 단서: "streak"(노면 결을 따라감, 최댓값) · "depth_min"
     # 거르기 R1 (개발 세트): {"energy": 1.608, "coherence": 0.294, "color": 2.996}
     "cue_filter": None,
+
+    # 구조장 전파 (논문 반영 2단계 — Chen et al. 2021 아이디어를 참고해 직접 설계): 0 = 끔, n = 반복 횟수
+    # 방향을 prop_bins칸으로 나눠 각 칸을 가리키는 점의 점수를 그 방향으로 길쭉한 가우시안(prop_len × prop_width)으로 퍼뜨려 더함
+    "line_propagate": 0, "prop_len": 7.0, "prop_width": 1.0, "prop_bins": 12,
 }
 
 
@@ -316,12 +320,47 @@ def seeded(weak, strong):
     return (keep[labels] * 255).astype(np.uint8)
 
 
+_PROP_KERNELS = {}
+
+
+def _prop_kernels(n, length, width):
+    """방향 칸마다 그 방향(선이 뻗는 방향)으로 길쭉한 가우시안 커널 (합 1)."""
+    key = (n, length, width)
+    if key not in _PROP_KERNELS:
+        size = int(6 * length) | 1
+        g = cv2.getGaussianKernel(size, length) @ cv2.getGaussianKernel(size, width).T     # 세로로 긴 커널
+        ks = []
+        for k in range(n):
+            phi = np.pi * k / n                                                           # 선이 뻗는 방향
+            M = cv2.getRotationMatrix2D(((size - 1) / 2, (size - 1) / 2), 90 - np.degrees(phi), 1.0)
+            r = cv2.warpAffine(g.astype(np.float32), M, (size, size))
+            ks.append((phi, r / r.sum()))
+        _PROP_KERNELS[key] = ks
+    return _PROP_KERNELS[key]
+
+
+def propagate(score, angle, cfg):
+    """구조장 전파: 각 점이 자기 방향 앞뒤로 점수를 나눠 줌 → 같은 방향으로 늘어선 점끼리 강해지고 끊긴 곳이 채워짐.
+    angle = 선을 가로지르는 방향(line_score) → 선이 뻗는 방향 θ = angle + 90°. cos⁸(θ − φ)로 각 칸에 나눠 담음."""
+    theta = angle + np.pi / 2
+    s = score.astype(np.float32)
+    ks = _prop_kernels(cfg["prop_bins"], cfg["prop_len"], cfg["prop_width"])
+    weights = [np.cos(theta - phi) ** 8 for phi, _ in ks]
+    for _ in range(cfg["line_propagate"]):
+        out = np.zeros_like(s)
+        for w, (_, k) in zip(weights, ks):
+            out += cv2.filter2D(s * w, -1, k, borderType=cv2.BORDER_REFLECT)
+        s = out
+    return s
+
+
 def line_trace(gray, cfg, hi_pct=None, with_angle=False):
     """찾기(선 모양): Hessian 선 점수 → 중심선 → 중심선 위 이중 임계값 → 1px 흔적 지도.
     with_angle=True면 방향 지도도 돌려줌 (가장 센 σ에서 λ1 고유벡터 = 선을 가로지르는 방향, 연속 라디안 —
     선이 뻗는 방향은 여기에 +90°). NMS 뒤에도 방향을 버리지 않기 위함 (논문 반영 0단계)."""
     score, angle = line_score(gray, cfg["line_sigmas"])
-    center = line_centerline(score, angle)
+    field = propagate(score, angle, cfg) if cfg.get("line_propagate", 0) > 0 else score
+    center = line_centerline(field, angle)
     if cfg["line_hi_abs"] is not None and hi_pct is None:
         hi = float(cfg["line_hi_abs"])
     else:
