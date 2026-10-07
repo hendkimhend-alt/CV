@@ -10,6 +10,8 @@
   streak    결 방향: 고리 구조 텐서 정렬도 × cos²(후보 방향 − 고리 결 방향)       (3-2 2차 모멘트 행렬)
   density   주변 흔적 밀도 · resid 직선 잔차 · paint 페인트 옆 · straight 곧음    (filter_features)
   valley    양쪽 확인 · length 길이
+  ms3 · ms4 · ms6  여러 크기에서 유지: σ 3 · 4 · 6 단일 크기 선 점수(σ² 맞춤, 5×5 최댓값)의 흔적 평균
+                   ÷ 찾기 점수(σ 1~2)의 흔적 평균 — 질감은 큰 σ에서 사라지고 균열은 남는다는 가설 (4-1 스케일 공간)
 출력: outputs/analysis/onroad_features/ (features.csv, onroad_features.md)
 """
 import csv, json, os, sys
@@ -20,8 +22,8 @@ import numpy as np
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from data import list_images
-from detect import (DEFAULT_CFG, _components, _crack_mask, _to_gray, _touches_border, classify, shape_features,
-                    valley_score)
+from detect import (DEFAULT_CFG, _components, _crack_mask, _to_gray, _touches_border, classify, line_score,
+                    shape_features, valley_score)
 from evaluate import _area, _inter, transform_gt
 from filter_features import cut_table, features as base_features, paint_pixels, road_pixels
 from paths import OUTPUT_DIR, RDD_DIR, imread
@@ -34,7 +36,9 @@ CFG = {**DEFAULT_CFG, "detector": "D1", "crack_find": "line", "line_hi_abs": 32.
        "crack_min_length": 45, "valley_check": True, "valley_min_ratio": 0.35}
 BASES = (0.3, 0.2)
 CRACKS = {"longitudinal crack", "transverse crack", "alligator crack"}
-FEATURES = ["contrast", "strong", "snr", "depth", "streak", "density", "resid", "straight", "paint", "valley", "length"]
+FEATURES = ["contrast", "strong", "snr", "depth", "streak", "density", "resid", "straight", "paint", "valley", "length",
+            "ms3", "ms4", "ms6"]
+BIG = (3.0, 4.0, 6.0)
 
 
 def onroad(pts, d, score, hi, smooth, J, b, W, H):
@@ -66,6 +70,7 @@ def main(limit=None):
         m = maps(ref); st = ref_stats(m, H, W)
         J = tensor(gray)
         road, paint = road_pixels(ref), paint_pixels(ref)
+        big = {s: cv2.dilate(line_score(gray, (s,))[0], np.ones((5, 5), np.uint8)) for s in BIG}
         for lo in BASES:
             mask, score, hi = _crack_mask(gray, {**CFG, "line_lo_ratio": lo})
             trace = mask > 0
@@ -85,6 +90,9 @@ def main(limit=None):
                 f = base_features(pts, d, gray, trace, road, paint, H, W)
                 f.update(onroad(pts, d, score, hi, smooth, J, b, W, H))
                 f["valley"] = v
+                base = max(float(score[pts[:, 1], pts[:, 0]].mean()), 1e-3)
+                for s_ in BIG:
+                    f[f"ms{int(s_)}"] = float(big[s_][pts[:, 1], pts[:, 0]].mean()) / base
                 rows.append({"base": lo, "image": path.name, "real": int(real),
                              **{k: round(float(f[k]), 4) for k in FEATURES}, "x1": x, "y1": y, "x2": x + w, "y2": y + h})
         if (i + 1) % 100 == 0:
