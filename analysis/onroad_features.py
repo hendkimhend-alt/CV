@@ -103,12 +103,12 @@ def main(limit=None):
     report(rows)
 
 
-def greedy(R, Fk, cap=0.10):
+def greedy(R, Fk, cap=0.10, feats=None):
     """규칙: 매번 남은 진짜 5% 손실 기준값 · 가짜 15% 이상 · 누적 진짜 손실 cap 이하."""
     keepR, keepF, used, steps = list(R), list(Fk), set(), []
     while True:
         best = None
-        for k in FEATURES:
+        for k in feats or FEATURES:
             if k in used:
                 continue
             t = cut_table(np.array([x[k] for x in keepR]), np.array([x[k] for x in keepF]), (0.05,))
