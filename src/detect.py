@@ -73,6 +73,13 @@ DEFAULT_CFG = {
     "link_dist": 0,              # 0 = 끔 (실험: 검출기 이름 뒤 l — D1vl). 긴 변 1024 기준 px
     "link_angle": 30,            # 끝점의 바깥 방향과 상대 끝점 쪽 방향의 최대 각도 (도)
     "link_radius": 6,            # 끝점의 바깥 방향을 구할 주변 뼈대 반경 (px)
+
+    # 찾기 방식 — "blackhat": 주변보다 얼마나 어두운가 (지금) / "line": 선 모양으로 파였는가 (Hessian)
+    # line: Hessian 선 점수 → 선 중심만 남기기(1px) → 중심선 위 이중 임계값 (Canny 방식을 선에 적용)
+    "crack_find": "blackhat",
+    "line_sigmas": (1.0, 1.5, 2.0),  # 가우시안 스케일 — 폭 1~4px 균열 (긴 변 1024 기준)
+    "line_hi_pct": 80.0,         # 강한 기준 = 사진 안 중심선 점수의 상위 (100 − 이 값)%
+    "line_lo_ratio": 0.4,        # 약한 기준 = 강한 기준 × 이 값
 }
 
 
@@ -115,6 +122,11 @@ def _d0_mask(gray, cfg):
 
 
 def _crack_mask(gray, cfg):
+    if cfg["crack_find"] == "line":
+        binary, score, hi = line_trace(gray, cfg)
+        if cfg["link_dist"] > 0:
+            binary = link_fragments(binary, cfg)
+        return binary, score, hi
     # 노면보다 어둡고 가는 구조만 밝게 남긴다
     bh = cv2.morphologyEx(gray, cv2.MORPH_BLACKHAT, _kernel(cfg["blackhat_ksize"]))
     if cfg["line_len"] > 0:
@@ -199,6 +211,63 @@ def _hysteresis(bh, cfg):
     seeded[np.unique(labels[bh >= hi])] = True
     seeded[0] = False                       # 배경
     return (seeded[labels] * 255).astype(np.uint8), hi
+
+
+# ---------- 찾기: 선 모양 (Hessian) ----------
+
+def line_score(gray, sigmas=(1.0, 1.5, 2.0)):
+    """Hessian 선 점수 — 밝기를 지형으로 보고, 한 방향으로만 오목한(어두운 골짜기) 정도.
+    2차 미분 표 [[Ixx, Ixy], [Ixy, Iyy]]의 고윳값 λ1 ≥ λ2 = 가장 많이 / 가장 적게 휜 방향의 휘어짐.
+    어두운 선 = 가로지르는 방향으로 크게 오목(λ1 큰 양수) + 따라가는 방향은 평평(|λ2| 작음) → λ1 − |λ2|.
+    점(골재 틈새)은 사방이 오목(λ1 ≈ λ2)해서 점수가 낮다. σ마다 σ²를 곱해 맞춘 뒤 최댓값 (폭이 다른 균열).
+    반환: 점수, 선을 가로지르는 방향(라디안, λ1의 고유벡터)"""
+    g = gray.astype(np.float32)
+    best, angle = np.zeros_like(g), np.zeros_like(g)
+    for s in sigmas:
+        b = cv2.GaussianBlur(g, (0, 0), s)
+        xx = cv2.Sobel(b, cv2.CV_32F, 2, 0, ksize=3)
+        yy = cv2.Sobel(b, cv2.CV_32F, 0, 2, ksize=3)
+        xy = cv2.Sobel(b, cv2.CV_32F, 1, 1, ksize=3)
+        root = np.sqrt((xx - yy) ** 2 + 4 * xy ** 2)
+        l1, l2 = (xx + yy + root) / 2, (xx + yy - root) / 2
+        score = np.clip(l1 - np.abs(l2), 0, None) * s * s
+        upd = score > best
+        best[upd] = score[upd]
+        angle[upd] = (0.5 * np.arctan2(2 * xy, xx - yy))[upd]
+    return best, angle
+
+
+def line_centerline(score, angle):
+    """선 중심만 남기기 — 선을 가로지르는 방향으로 양옆 이웃보다 작지 않은 점만 (Canny의 최댓값만 남기기, 4방향)."""
+    q = (np.round(angle / (np.pi / 4)) % 4).astype(np.int8)    # 0: 가로 · 1: ↘ · 2: 세로 · 3: ↗
+    p = np.pad(score, 1)
+    c = p[1:-1, 1:-1]
+    sides = {0: (p[1:-1, :-2], p[1:-1, 2:]), 1: (p[:-2, :-2], p[2:, 2:]),
+             2: (p[:-2, 1:-1], p[2:, 1:-1]), 3: (p[:-2, 2:], p[2:, :-2])}
+    keep = np.zeros(c.shape, bool)
+    for k, (a, b) in sides.items():
+        keep |= (q == k) & (c >= a) & (c >= b)
+    return np.where(keep & (c > 0), c, 0).astype(np.float32)
+
+
+def seeded(weak, strong):
+    """이중 임계값: 약한 픽셀 중 강한 픽셀과 이어진 덩어리만 살림."""
+    n, labels = cv2.connectedComponents(weak.astype(np.uint8), connectivity=8)
+    keep = np.zeros(n, bool)
+    keep[np.unique(labels[strong & weak])] = True
+    keep[0] = False
+    return (keep[labels] * 255).astype(np.uint8)
+
+
+def line_trace(gray, cfg, hi_pct=None):
+    """찾기(선 모양): Hessian 선 점수 → 중심선 → 중심선 위 이중 임계값 → 1px 흔적 지도."""
+    score, angle = line_score(gray, cfg["line_sigmas"])
+    center = line_centerline(score, angle)
+    vals = center[center > 0]
+    hi = float(np.percentile(vals, cfg["line_hi_pct"] if hi_pct is None else hi_pct)) if vals.size else 1.0
+    hi = max(hi, 1e-6)
+    trace = seeded(center >= hi * cfg["line_lo_ratio"], center >= hi)
+    return cv2.ximgproc.thinning(trace), score, hi          # 폭 2px 선의 중심이 두 줄로 남는 경우를 1px로
 
 
 def _pothole_mask(gray, cfg):
