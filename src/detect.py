@@ -100,7 +100,9 @@ DEFAULT_CFG = {
     # 식 9의 β: 논문은 "모든 사진 세기 최댓값의 절반" — 근접 노면 사진에선 균열이 가장 센 구조라 맞지만, 차량 시점에선 최댓값이
     # 차선 · 경계(426)라 균열 표가 0에 가까워짐 → 우리 강한 기준 32.5가 M = 0.5가 되게: β = 32.5 / √(2 ln 2) = 27.6
     "tensor_beta": 27.6,
-    "tensor_gate": False,   # True: 찾기 점수 = 선 점수 × 전파 세기, 중심선은 원래 방향 (논문 §5.1 "곡선 띠 안의 중심")
+    "tensor_gate": False,
+    # 가이드 필터 (Chen et al. 2021 §2): 찾기 입력에만. None = 끔 · {"r": 반지름, "eps": "std" | "var" | 숫자}
+    "guided_filter": None,   # True: 찾기 점수 = 선 점수 × 전파 세기, 중심선은 원래 방향 (논문 §5.1 "곡선 띠 안의 중심")
 }
 
 
@@ -404,11 +406,23 @@ def tensor_propagate(score, angle, cfg):
     return strength, (theta - np.pi / 2).astype(np.float32)
 
 
+def find_input(gray, cfg):
+    """찾기 입력 전처리. guided_filter가 있으면 자기 자신을 안내 영상으로 한 가이드 필터 —
+    밝기 변화가 큰 곳(균열 경계)은 그대로, 평평한 노면은 평균 (a = σ²/(σ² + ε)). ε = 사진 표준편차("std") · 분산("var") · 숫자."""
+    gf = cfg.get("guided_filter")
+    if not gf:
+        return gray
+    g = gray.astype(np.float32)
+    eps = gf.get("eps", "std")
+    eps = float(g.std()) if eps == "std" else float(g.var()) if eps == "var" else float(eps)
+    return cv2.ximgproc.guidedFilter(g, g, int(gf.get("r", 4)), eps)
+
+
 def line_trace(gray, cfg, hi_pct=None, with_angle=False):
     """찾기(선 모양): Hessian 선 점수 → 중심선 → 중심선 위 이중 임계값 → 1px 흔적 지도.
     with_angle=True면 방향 지도도 돌려줌 (가장 센 σ에서 λ1 고유벡터 = 선을 가로지르는 방향, 연속 라디안 —
     선이 뻗는 방향은 여기에 +90°). NMS 뒤에도 방향을 버리지 않기 위함 (논문 반영 0단계)."""
-    score, angle = line_score(gray, cfg["line_sigmas"], cfg.get("line_scale_combine", "max"))
+    score, angle = line_score(find_input(gray, cfg), cfg["line_sigmas"], cfg.get("line_scale_combine", "max"))
     if cfg.get("tensor_propagate", 0) > 0:
         field, nangle = tensor_propagate(score, angle, cfg)
         if cfg.get("tensor_gate", False):                       # P2-b: 전파는 띠(지지)로만, 중심선은 원래 점수 · 방향으로
