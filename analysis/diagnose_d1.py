@@ -84,7 +84,7 @@ def candidates(ref, cfg):
     return out
 
 
-def run(ratio, limit, lo_ratio=None, link_dist=0):
+def run(ratio, limit, lo_ratio=None, link_dist=0, hi_pct=None):
     name, _, images = list_images("rdd_dev")
     images = images[:limit] if limit else images
     pcfg = validate_config({"roi": "auto"})
@@ -92,6 +92,8 @@ def run(ratio, limit, lo_ratio=None, link_dist=0):
     if lo_ratio is not None:
         dcfg["crack_lo_ratio"] = lo_ratio
     dcfg["link_dist"] = link_dist
+    if hi_pct is not None:
+        dcfg["crack_hi_pct"] = hi_pct
     lost = Counter(); lost_by = defaultdict(Counter); n_gt = Counter()
     fp = Counter(); fp_len = []; n_img = 0
     samples = defaultdict(list)
@@ -206,9 +208,11 @@ if __name__ == "__main__":
     ap.add_argument("--limit", type=int)
     ap.add_argument("--crack-lo-ratio", type=float, help="D1 이중 임계값 약한 기준 비율 (기본 0.5)")
     ap.add_argument("--link-dist", type=int, default=0, help="조각 잇기 거리 (0 = 끔)")
+    ap.add_argument("--crack-hi-pct", type=float, help="D1 씨앗 기준 백분위 (기본 97 = 상위 3%%)")
     a = ap.parse_args()
-    lost, lost_by, n_gt, fp, n_img, samples = run(a.valley_ratio, a.limit, a.crack_lo_ratio, a.link_dist)
-    out = OUTPUT_DIR / "analysis" / ("diagnose_d1" + (f"_lo{a.crack_lo_ratio}" if a.crack_lo_ratio else "") + (f"_link{a.link_dist}" if a.link_dist else ""))
+    lost, lost_by, n_gt, fp, n_img, samples = run(a.valley_ratio, a.limit, a.crack_lo_ratio, a.link_dist, a.crack_hi_pct)
+    out = OUTPUT_DIR / "analysis" / ("diagnose_d1" + (f"_lo{a.crack_lo_ratio}" if a.crack_lo_ratio else "") + (f"_link{a.link_dist}" if a.link_dist else "")
+                                   + (f"_hi{a.crack_hi_pct:g}" if a.crack_hi_pct else ""))
     out.mkdir(parents=True, exist_ok=True)
     md = report(lost, lost_by, n_gt, fp, n_img, a.valley_ratio)
     (out / "diagnose_d1.md").write_text(md, encoding="utf-8")

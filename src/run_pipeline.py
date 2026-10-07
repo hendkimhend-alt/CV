@@ -69,7 +69,7 @@ def new_run_dir(parent):
     raise RuntimeError(f"error:결과 폴더를 만들 수 없음 {parent / base}")
 
 
-def detector_cfg(name, valley_ratio=None, crack_lo_ratio=None, link_dist=None):
+def detector_cfg(name, valley_ratio=None, crack_lo_ratio=None, link_dist=None, crack_hi_pct=None, canny=None):
     """검출기 이름 → detect() 설정. 뒤에 붙는 글자: v = 양쪽 확인, l = 조각 잇기 (예: D1v, D1vl)."""
     base, flags = name[:2], name[2:]
     if base not in DETECTORS or set(flags) - {"v", "l"} or len(set(flags)) != len(flags):
@@ -81,6 +81,10 @@ def detector_cfg(name, valley_ratio=None, crack_lo_ratio=None, link_dist=None):
         cfg["valley_min_ratio"] = valley_ratio
     if crack_lo_ratio is not None:
         cfg["crack_lo_ratio"] = crack_lo_ratio
+    if crack_hi_pct is not None:
+        cfg["crack_hi_pct"] = crack_hi_pct
+    if canny is not None:
+        cfg["canny_low"], cfg["canny_high"] = canny
     return cfg
 
 
@@ -90,7 +94,7 @@ def count_edges(gray):
 
 def run(dataset="provided", limit=None, conditions=CONDITIONS, detectors=DETECTORS,
         keypoints=True, save_images=5, n_boot=1000, reference=("P1+", "D1"), roi="bottom_half", flatten_ksize=None,
-        valley_ratio=None, crack_lo_ratio=None, link_dist=None):
+        valley_ratio=None, crack_lo_ratio=None, link_dist=None, crack_hi_pct=None, canny=None):
     for cond in conditions:
         parse_condition(cond)                                    # 잘못된 조건 이름은 실행 전에 오류
     for det_name in detectors:
@@ -136,7 +140,7 @@ def run(dataset="provided", limit=None, conditions=CONDITIONS, detectors=DETECTO
 
             for det_name in detectors:
                 t0 = time.perf_counter()
-                dets = detect(fixed, detector_cfg(det_name, valley_ratio, crack_lo_ratio, link_dist))
+                dets = detect(fixed, detector_cfg(det_name, valley_ratio, crack_lo_ratio, link_dist, crack_hi_pct, canny))
                 det_ms = (time.perf_counter() - t0) * 1000
                 row = {"image": path.name, "dataset": name, "group": ";".join(group), "roi_tags": ";".join(tags),
                        "viewpoint": viewpoints.get(path.name, ""),
@@ -188,6 +192,7 @@ def run(dataset="provided", limit=None, conditions=CONDITIONS, detectors=DETECTO
     (run_dir / "run_config.json").write_text(json.dumps({
         "dataset": name, "folder": str(folder), "n_images": len(images), "conditions": list(conditions),
         "detectors": list(detectors), "preprocess_cfg": cfg_a, "detect_cfg": DETECT_CFG, "valley_ratio": valley_ratio, "crack_lo_ratio": crack_lo_ratio, "link_dist": link_dist,
+        "crack_hi_pct": crack_hi_pct, "canny": canny,
         "edges": f"Canny{CANNY_EDGES}", "keypoints": "SIFT" if keypoints else None,
         "bootstrap": n_boot, "reference": list(reference),
         "versions": {"python": platform.python_version(), "opencv": cv2.__version__, "numpy": np.__version__},
@@ -280,6 +285,9 @@ def main():
     p.add_argument("--valley-ratio", type=float, help="양쪽 확인 기준 (작은 쪽 ÷ 큰 쪽, 기본 0.35)")
     p.add_argument("--crack-lo-ratio", type=float,
                    help="D1 이중 임계값의 약한 기준 = 강한 기준 × 이 값 (기본 0.5). 낮추면 끊긴 균열 조각이 이어짐")
+    p.add_argument("--crack-hi-pct", type=float,
+                   help="D1 이중 임계값의 강한 기준(씨앗) = 사진 안 Black-hat 상위 (100 − 이 값)%% (기본 97 = 상위 3%%). 낮추면 씨앗이 늘어남")
+    p.add_argument("--canny", type=int, nargs=2, metavar=("LOW", "HIGH"), help="D0 Canny 기준 (기본 50 150)")
     p.add_argument("--link-dist", type=int, help="조각 잇기 최대 거리 (px, 긴 변 1024 기준, 기본 15) — 검출기 이름에 l")
     p.add_argument("--no-keypoints", action="store_true", help="SIFT 특징점 수 생략 (빠르게)")
     p.add_argument("--save-images", type=int, default=5, help="결과 그림 저장 장수 (0 = 안 함, -1 = 전부)")
@@ -290,7 +298,8 @@ def main():
                    help="노면 영역: bottom_half(기본) / full(전체) / bottom_<N>(아래쪽 N%%만, 예: bottom_60) / auto(사진마다 도로 시작 높이)")
     a = p.parse_args()
     run(a.dataset, a.limit, tuple(a.conditions), tuple(a.detectors), not a.no_keypoints, a.save_images,
-        a.bootstrap, tuple(a.reference.split("/")), a.roi, a.flatten_ksize, a.valley_ratio, a.crack_lo_ratio, a.link_dist)
+        a.bootstrap, tuple(a.reference.split("/")), a.roi, a.flatten_ksize, a.valley_ratio, a.crack_lo_ratio, a.link_dist,
+        a.crack_hi_pct, tuple(a.canny) if a.canny else None)
 
 
 if __name__ == "__main__":
