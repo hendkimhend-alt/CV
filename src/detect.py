@@ -100,6 +100,7 @@ DEFAULT_CFG = {
     # 식 9의 β: 논문은 "모든 사진 세기 최댓값의 절반" — 근접 노면 사진에선 균열이 가장 센 구조라 맞지만, 차량 시점에선 최댓값이
     # 차선 · 경계(426)라 균열 표가 0에 가까워짐 → 우리 강한 기준 32.5가 M = 0.5가 되게: β = 32.5 / √(2 ln 2) = 27.6
     "tensor_beta": 27.6,
+    "tensor_gate": False,   # True: 찾기 점수 = 선 점수 × 전파 세기, 중심선은 원래 방향 (논문 §5.1 "곡선 띠 안의 중심")
 }
 
 
@@ -410,7 +411,10 @@ def line_trace(gray, cfg, hi_pct=None, with_angle=False):
     score, angle = line_score(gray, cfg["line_sigmas"], cfg.get("line_scale_combine", "max"))
     if cfg.get("tensor_propagate", 0) > 0:
         field, nangle = tensor_propagate(score, angle, cfg)
-        center = line_centerline(field, nangle)
+        if cfg.get("tensor_gate", False):                       # P2-b: 전파는 띠(지지)로만, 중심선은 원래 점수 · 방향으로
+            center = line_centerline(score * field, angle)
+        else:
+            center = line_centerline(field, nangle)
     else:
         field = propagate(score, angle, cfg) if cfg.get("line_propagate", 0) > 0 else score
         center = line_centerline(field, angle)
