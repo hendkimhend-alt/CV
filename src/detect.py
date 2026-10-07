@@ -93,6 +93,13 @@ DEFAULT_CFG = {
     # 구조장 전파 (논문 반영 2단계 — Chen et al. 2021 아이디어를 참고해 직접 설계): 0 = 끔, n = 반복 횟수
     # 방향을 prop_bins칸으로 나눠 각 칸을 가리키는 점의 점수를 그 방향으로 길쭉한 가우시안(prop_len × prop_width)으로 퍼뜨려 더함
     "line_propagate": 0, "prop_len": 7.0, "prop_width": 1.0, "prop_bins": 12,
+    # 여러 크기 합치기: "max"(지금) · "mean"(논문 §3.2)
+    "line_scale_combine": "max",
+    # 논문식 텐서 전파 (§4 식 12~16): 0 = 끔, n = 반복 횟수 · 타원 σ_ma(긴 축) × σ_mi(짧은 축) · 방향 칸 수
+    "tensor_propagate": 0, "tensor_ma": 10.0, "tensor_mi": 2.0, "tensor_bins": 16,
+    # 식 9의 β: 논문은 "모든 사진 세기 최댓값의 절반" — 근접 노면 사진에선 균열이 가장 센 구조라 맞지만, 차량 시점에선 최댓값이
+    # 차선 · 경계(426)라 균열 표가 0에 가까워짐 → 우리 강한 기준 32.5가 M = 0.5가 되게: β = 32.5 / √(2 ln 2) = 27.6
+    "tensor_beta": 27.6,
 }
 
 
@@ -276,14 +283,17 @@ def _hysteresis(bh, cfg):
 
 # ---------- 찾기: 선 모양 (Hessian) ----------
 
-def line_score(gray, sigmas=(1.0, 1.5, 2.0)):
+def line_score(gray, sigmas=(1.0, 1.5, 2.0), combine="max"):
     """Hessian 선 점수 — 밝기를 지형으로 보고, 한 방향으로만 오목한(어두운 골짜기) 정도.
     2차 미분 표 [[Ixx, Ixy], [Ixy, Iyy]]의 고윳값 λ1 ≥ λ2 = 가장 많이 / 가장 적게 휜 방향의 휘어짐.
     어두운 선 = 가로지르는 방향으로 크게 오목(λ1 큰 양수) + 따라가는 방향은 평평(|λ2| 작음) → λ1 − |λ2|.
-    점(골재 틈새)은 사방이 오목(λ1 ≈ λ2)해서 점수가 낮다. σ마다 σ²를 곱해 맞춘 뒤 최댓값 (폭이 다른 균열).
+    점(골재 틈새)은 사방이 오목(λ1 ≈ λ2)해서 점수가 낮다. σ마다 σ²를 곱해 맞춘 뒤 합침 (폭이 다른 균열):
+      combine="max"  가장 센 크기 · 방향도 그 크기의 것
+      combine="mean" 크기들의 평균 · 방향은 평균에 가장 가까운 크기의 것 (Chen et al. 2021 §3.2 식 11 —
+                     최댓값은 한 크기에서만 튀는 잡음이 섞인다)
     반환: 점수, 선을 가로지르는 방향(라디안, λ1의 고유벡터)"""
     g = gray.astype(np.float32)
-    best, angle = np.zeros_like(g), np.zeros_like(g)
+    scores, angles = [], []
     for s in sigmas:
         b = cv2.GaussianBlur(g, (0, 0), s)
         xx = cv2.Sobel(b, cv2.CV_32F, 2, 0, ksize=3)
@@ -291,11 +301,21 @@ def line_score(gray, sigmas=(1.0, 1.5, 2.0)):
         xy = cv2.Sobel(b, cv2.CV_32F, 1, 1, ksize=3)
         root = np.sqrt((xx - yy) ** 2 + 4 * xy ** 2)
         l1, l2 = (xx + yy + root) / 2, (xx + yy - root) / 2
-        score = np.clip(l1 - np.abs(l2), 0, None) * s * s
-        upd = score > best
-        best[upd] = score[upd]
-        angle[upd] = (0.5 * np.arctan2(2 * xy, xx - yy))[upd]
-    return best, angle
+        scores.append(np.clip(l1 - np.abs(l2), 0, None) * s * s)
+        angles.append(0.5 * np.arctan2(2 * xy, xx - yy))
+    S, A = np.stack(scores), np.stack(angles)
+    if combine == "mean":
+        best = S.mean(0)
+        pick = np.abs(S - best).argmin(0)
+    else:
+        best = np.zeros_like(g)
+        pick = np.zeros(g.shape, np.int64)
+        for i in range(len(sigmas)):                      # 같은 값이면 앞 크기 (예전 코드와 같은 결과)
+            upd = S[i] > best
+            best[upd] = S[i][upd]
+            pick[upd] = i
+    angle = np.take_along_axis(A, pick[None], 0)[0]
+    return best.astype(np.float32), angle.astype(np.float32)
 
 
 def line_centerline(score, angle):
@@ -354,13 +374,46 @@ def propagate(score, angle, cfg):
     return s
 
 
+def tensor_propagate(score, angle, cfg):
+    """논문식 구조 전파 (Chen et al. 2021 §4): 각 점 O가 자기 선 방향 t_O로 막대 텐서 M_O · G(타원) · t_O t_Oᵀ 를
+    이웃에 보냄 (G = 선 방향으로 σ_ma, 수직으로 σ_mi인 가우시안 — 식 12~14) → 점마다 받은 텐서를 더함 (식 15)
+    → 고윳값 분해: 새 세기 = λ1 − λ2 (한 방향으로 모인 정도 — 엇갈린 표는 상쇄), 새 방향 = e1 (식 16) → 반복.
+    M_O = 1 − exp(−점수² / 2β²) (식 9의 세기 항 — 곡선성 항은 선 점수 λ1 − |λ2|에 이미 들어 있음).
+    다음 반복의 M_O = 세기 (0~1로 자름 · 세기는 곧은 선이 M이 되게 고정 상수로 나눈 값 — 다시 꺾으면 반복마다 사라짐).
+    방향은 tensor_bins칸으로 나눠 칸마다 회전한 타원 커널로 모음.
+    반환: 세기, 선을 가로지르는 방향 (line_centerline용)"""
+    n = cfg["tensor_bins"]
+    ks = _prop_kernels(n, cfg["tensor_ma"], cfg["tensor_mi"])
+    m = (1 - np.exp(-score.astype(np.float32) ** 2 / (2 * cfg["tensor_beta"] ** 2))).astype(np.float32)
+    theta = angle + np.pi / 2                                  # 선이 뻗는 방향
+    for _ in range(cfg["tensor_propagate"]):
+        k_of = (np.round(np.mod(theta, np.pi) / (np.pi / n)).astype(np.int64)) % n
+        A = np.zeros_like(m); B = np.zeros_like(m); C = np.zeros_like(m)
+        for k, (phi, ker) in enumerate(ks):
+            sel = np.where(k_of == k, m, 0).astype(np.float32)
+            if not sel.any():
+                continue
+            t = cv2.filter2D(sel, -1, ker / ker.max(), borderType=cv2.BORDER_CONSTANT)  # 꼭짓점 1인 타원 (식 12)
+            c, s_ = np.cos(phi), np.sin(phi)
+            A += t * c * c; B += t * c * s_; C += t * s_ * s_
+        # λ1 − λ2 · 고정 상수로 나눔: M=1인 곧은 선 위 점이 받는 합 ≈ σ_ma·√π → 1 (사진마다 맞추지 않음 — E8 교훈)
+        strength = (np.sqrt((A - C) ** 2 + 4 * B * B) / (cfg["tensor_ma"] * np.sqrt(np.pi))).astype(np.float32)
+        theta = 0.5 * np.arctan2(2 * B, A - C)                 # e1
+        m = np.clip(strength, 0, 1)                            # 다음 반복의 M_O (0~1)
+    return strength, (theta - np.pi / 2).astype(np.float32)
+
+
 def line_trace(gray, cfg, hi_pct=None, with_angle=False):
     """찾기(선 모양): Hessian 선 점수 → 중심선 → 중심선 위 이중 임계값 → 1px 흔적 지도.
     with_angle=True면 방향 지도도 돌려줌 (가장 센 σ에서 λ1 고유벡터 = 선을 가로지르는 방향, 연속 라디안 —
     선이 뻗는 방향은 여기에 +90°). NMS 뒤에도 방향을 버리지 않기 위함 (논문 반영 0단계)."""
-    score, angle = line_score(gray, cfg["line_sigmas"])
-    field = propagate(score, angle, cfg) if cfg.get("line_propagate", 0) > 0 else score
-    center = line_centerline(field, angle)
+    score, angle = line_score(gray, cfg["line_sigmas"], cfg.get("line_scale_combine", "max"))
+    if cfg.get("tensor_propagate", 0) > 0:
+        field, nangle = tensor_propagate(score, angle, cfg)
+        center = line_centerline(field, nangle)
+    else:
+        field = propagate(score, angle, cfg) if cfg.get("line_propagate", 0) > 0 else score
+        center = line_centerline(field, angle)
     if cfg["line_hi_abs"] is not None and hi_pct is None:
         hi = float(cfg["line_hi_abs"])
     else:
