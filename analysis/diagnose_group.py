@@ -8,7 +8,9 @@ G2 (잇기 거리): 잇기 없음 · 10 · 20 · 30 · 45px (각도 30°)
     M 비교 박스 = 손상 없는 비교 박스에서 같은 조건의 묶음 비율 · M′ = M − M 비교 박스
     넘침 = 박스를 절반 이상 가로지르는 묶음은 있는데 박스 밖으로 넘쳐 50% 안을 못 지킨 비율
     사진당 긴 묶음 = 어떤 정답 박스에도 50% 이상 안 들어간 길이 60px 이상 묶음 수
-출력: outputs/analysis/diagnose_group/
+G2-b (--density): 찾기 고정 기준 32.5 · 45.5 · 57.4 · 72.3 × 잇기 없음 · 10 · 20 · 30 — 흔적을 줄이면 잇기가 나아지나
+    + C 흔적 없는 정답 (박스 안에 흔적이 하나도 없는 비율)
+출력: outputs/analysis/diagnose_group/ (G2-b: diagnose_group_density/)
 """
 import json, os, sys
 from collections import defaultdict
@@ -102,6 +104,100 @@ def box_state(lab, gs, box, W, H):
     return "넘침" if over else "짧음"
 
 
+DENS_TH = (32.5, 45.5, 57.4, 72.3)
+DENS_DISTS = (0, 10, 20, 30)
+
+
+def empty_in(trace, box, W, H):
+    x1, y1, x2, y2 = clip(box, W, H)
+    return not trace[y1:y2, x1:x2].any()
+
+
+def main_density(limit=None):
+    out = OUT.parent / "diagnose_group_density"
+    out.mkdir(parents=True, exist_ok=True)
+    _, _, images = list_images("rdd_dev")
+    images = images[:limit] if limit else images
+    pcfg = validate_config({"roi": "auto"})
+    rng = np.random.default_rng(20261007)
+    keys = [(t, d) for t in DENS_TH for d in DENS_DISTS]
+    st = {k: {"gt": [], "ctl": [], "long": []} for k in keys}
+    emp = {t: [] for t in DENS_TH}
+    frac = {t: [] for t in DENS_TH}
+    for i, path in enumerate(images):
+        ann = json.loads((RDD_DIR / "ann" / f"{path.name}.json").read_text(encoding="utf-8"))
+        objs = [(o["classTitle"], *o["points"]["exterior"][0], *o["points"]["exterior"][1]) for o in ann["objects"]]
+        ref, geo = geometry_preprocess(imread(path), pcfg, path.name)
+        boxes = [(o[0], min(o[1], o[3]), min(o[2], o[4]), max(o[1], o[3]), max(o[2], o[4])) for o in objs]
+        kept = transform_gt(boxes, geo)
+        if len(kept) != len(boxes):
+            continue
+        H, W = ref.shape[:2]
+        gt_all = [tuple(k[1:]) for k in kept]
+        lines = [tuple(k[1:]) for o, k in zip(objs, kept) if o[0] in LINE_TYPES]
+        road = road_mask(ref)
+        ctls = [c for c in (control_box(gt_all, b, W, road, rng) for b in lines) if c is not None]
+        gray = _to_gray(ref)
+        for t in DENS_TH:
+            trace, _, _ = line_trace(gray, {**CFG, "line_hi_abs": t})
+            frac[t].append((trace > 0).mean())
+            emp[t] += [empty_in(trace, b, W, H) for b in lines]
+            for d in DENS_DISTS:
+                binary = link_fragments(trace, {**CFG, "link_dist": d}) if d else trace
+                lab, gs = groups(binary)
+                st[(t, d)]["gt"] += [box_state(lab, gs, b, W, H) for b in lines]
+                st[(t, d)]["ctl"] += [box_state(lab, gs, c, W, H) for c in ctls]
+                st[(t, d)]["long"].append(sum(1 for g in gs if g[4] >= LONG and not any(
+                    _inter(g[:4], b) >= 0.5 * max(_area(g[:4]), 1.0) for b in gt_all)))
+        if (i + 1) % 100 == 0:
+            print(f"  {i + 1}/{len(images)}", flush=True)
+
+    arr = {}
+    for k in keys:
+        arr[k] = (np.array([x or "없음" for x in st[k]["gt"]]), np.array([x for x in st[k]["ctl"] if x]))
+    brng = np.random.default_rng(20261006)
+    ng, nc = len(arr[keys[0]][0]), len(arr[keys[0]][1])
+    idx = [(brng.integers(0, ng, ng), brng.integers(0, nc, nc)) for _ in range(1000)]
+    E = {t: np.array(emp[t]) for t in DENS_TH}
+
+    def mprime(k, ig=slice(None), ic=slice(None)):
+        g, c = arr[k]
+        return (g[ig] == "M").mean() - (c[ic] == "M").mean()
+
+    def ci(k, ref, f):
+        v = [f(k, ig, ic) - f(ref, ig, ic) for ig, ic in idx]
+        lo, hi = np.percentile(v, [2.5, 97.5])
+        return f(k) - f(ref), lo, hi
+
+    over = lambda k, ig=slice(None), ic=slice(None): (arr[k][0][ig] == "넘침").mean()
+    star = lambda lo, hi: "✱" if lo > 0 or hi < 0 else ""
+    L = ["# 묶기 진단 G2-b — 찾기 기준(흔적 양) × 잇기 거리, 개발 세트", "",
+         f"선 균열 정답 박스 {ng}개 · 비교 박스 {nc}개", "",
+         "| 찾기 기준 | 흔적 양 % | C 흔적 없는 정답 | 잇기 | M 정답 | M 비교 | **M′** | 넘침 | 짧음 | 사진당 긴 묶음 | 같은 기준 잇기 없음 대비 ΔM′ | Δ넘침 | 지금(32.5 · 없음) 대비 ΔM′ | Δ넘침 |",
+         "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
+    base = (DENS_TH[0], 0)
+    for k in keys:
+        t, d = k
+        g, c = arr[k]
+        row = (f"| {t} | {np.mean(frac[t]) * 100:.2f} | {E[t].mean():.3f} | {d or '없음'} | {(g == 'M').mean():.3f} | {(c == 'M').mean():.3f} | "
+               f"{mprime(k):.3f} | {over(k):.3f} | {(g == '짧음').mean():.3f} | {np.mean(st[k]['long']):.1f} | ")
+        if d:
+            a = ci(k, (t, 0), mprime); b = ci(k, (t, 0), over)
+            row += f"{a[0]:+.3f}{star(a[1], a[2])} | {b[0]:+.3f}{star(b[1], b[2])} | "
+        else:
+            row += "— | — | "
+        if k != base:
+            a = ci(k, base, mprime); b = ci(k, base, over)
+            row += f"{a[0]:+.3f}{star(a[1], a[2])} [{a[1]:+.3f}, {a[2]:+.3f}] | {b[0]:+.3f}{star(b[1], b[2])} |"
+        else:
+            row += "기준 | 기준 |"
+        L.append(row)
+    md = "\n".join(L) + "\n"
+    (out / "diagnose_group_density.md").write_text(md, encoding="utf-8")
+    print(md)
+    print(f"→ {out}")
+
+
 def main(limit=None):
     OUT.mkdir(parents=True, exist_ok=True)
     _, _, images = list_images("rdd_dev")
@@ -178,4 +274,5 @@ def main(limit=None):
 
 
 if __name__ == "__main__":
-    main(int(sys.argv[1]) if len(sys.argv) > 1 else None)
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    (main_density if "--density" in sys.argv else main)(int(args[0]) if args else None)

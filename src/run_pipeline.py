@@ -69,12 +69,17 @@ def new_run_dir(parent):
     raise RuntimeError(f"error:결과 폴더를 만들 수 없음 {parent / base}")
 
 
-def detector_cfg(name, valley_ratio=None, crack_lo_ratio=None, link_dist=None, crack_hi_pct=None, canny=None):
-    """검출기 이름 → detect() 설정. 뒤에 붙는 글자: v = 양쪽 확인, l = 조각 잇기 (예: D1v, D1vl)."""
+def detector_cfg(name, valley_ratio=None, crack_lo_ratio=None, link_dist=None, crack_hi_pct=None, canny=None,
+                 line_hi_abs=None):
+    """검출기 이름 → detect() 설정. 뒤에 붙는 글자: v = 양쪽 확인, l = 조각 잇기, h = 찾기를 Hessian 선 점수로
+    (예: D1v, D1vl, D1hv)."""
     base, flags = name[:2], name[2:]
-    if base not in DETECTORS or set(flags) - {"v", "l"} or len(set(flags)) != len(flags):
-        raise ValueError(f"error:검출기 {name} — D0 / D1 + 뒤에 v(양쪽 확인) · l(조각 잇기) (예: D1v, D1vl)")
+    if base not in DETECTORS or set(flags) - {"v", "l", "h"} or len(set(flags)) != len(flags):
+        raise ValueError(f"error:검출기 {name} — D0 / D1 + 뒤에 v(양쪽 확인) · l(조각 잇기) · h(Hessian 찾기) (예: D1v, D1vl, D1hv)")
     cfg = {"detector": base, "valley_check": "v" in flags}
+    if "h" in flags:
+        cfg["crack_find"] = "line"
+        cfg["line_hi_abs"] = line_hi_abs or 32.5
     if "l" in flags:
         cfg["link_dist"] = link_dist or 15
     if valley_ratio is not None:
@@ -94,7 +99,7 @@ def count_edges(gray):
 
 def run(dataset="provided", limit=None, conditions=CONDITIONS, detectors=DETECTORS,
         keypoints=True, save_images=5, n_boot=1000, reference=("P1+", "D1"), roi="bottom_half", flatten_ksize=None,
-        valley_ratio=None, crack_lo_ratio=None, link_dist=None, crack_hi_pct=None, canny=None):
+        valley_ratio=None, crack_lo_ratio=None, link_dist=None, crack_hi_pct=None, canny=None, line_hi_abs=None):
     for cond in conditions:
         parse_condition(cond)                                    # 잘못된 조건 이름은 실행 전에 오류
     for det_name in detectors:
@@ -140,7 +145,7 @@ def run(dataset="provided", limit=None, conditions=CONDITIONS, detectors=DETECTO
 
             for det_name in detectors:
                 t0 = time.perf_counter()
-                dets = detect(fixed, detector_cfg(det_name, valley_ratio, crack_lo_ratio, link_dist, crack_hi_pct, canny))
+                dets = detect(fixed, detector_cfg(det_name, valley_ratio, crack_lo_ratio, link_dist, crack_hi_pct, canny, line_hi_abs))
                 det_ms = (time.perf_counter() - t0) * 1000
                 row = {"image": path.name, "dataset": name, "group": ";".join(group), "roi_tags": ";".join(tags),
                        "viewpoint": viewpoints.get(path.name, ""),
@@ -192,7 +197,7 @@ def run(dataset="provided", limit=None, conditions=CONDITIONS, detectors=DETECTO
     (run_dir / "run_config.json").write_text(json.dumps({
         "dataset": name, "folder": str(folder), "n_images": len(images), "conditions": list(conditions),
         "detectors": list(detectors), "preprocess_cfg": cfg_a, "detect_cfg": DETECT_CFG, "valley_ratio": valley_ratio, "crack_lo_ratio": crack_lo_ratio, "link_dist": link_dist,
-        "crack_hi_pct": crack_hi_pct, "canny": canny,
+        "crack_hi_pct": crack_hi_pct, "canny": canny, "line_hi_abs": line_hi_abs,
         "edges": f"Canny{CANNY_EDGES}", "keypoints": "SIFT" if keypoints else None,
         "bootstrap": n_boot, "reference": list(reference),
         "versions": {"python": platform.python_version(), "opencv": cv2.__version__, "numpy": np.__version__},
@@ -287,6 +292,7 @@ def main():
                    help="D1 이중 임계값의 약한 기준 = 강한 기준 × 이 값 (기본 0.5). 낮추면 끊긴 균열 조각이 이어짐")
     p.add_argument("--crack-hi-pct", type=float,
                    help="D1 이중 임계값의 강한 기준(씨앗) = 사진 안 Black-hat 상위 (100 − 이 값)%% (기본 97 = 상위 3%%). 낮추면 씨앗이 늘어남")
+    p.add_argument("--line-hi-abs", type=float, help="Hessian 찾기(h)의 고정 강한 기준 (기본 32.5 ≈ 흔적 양 5.9%%)")
     p.add_argument("--canny", type=int, nargs=2, metavar=("LOW", "HIGH"), help="D0 Canny 기준 (기본 50 150)")
     p.add_argument("--link-dist", type=int, help="조각 잇기 최대 거리 (px, 긴 변 1024 기준, 기본 15) — 검출기 이름에 l")
     p.add_argument("--no-keypoints", action="store_true", help="SIFT 특징점 수 생략 (빠르게)")
@@ -299,7 +305,7 @@ def main():
     a = p.parse_args()
     run(a.dataset, a.limit, tuple(a.conditions), tuple(a.detectors), not a.no_keypoints, a.save_images,
         a.bootstrap, tuple(a.reference.split("/")), a.roi, a.flatten_ksize, a.valley_ratio, a.crack_lo_ratio, a.link_dist,
-        a.crack_hi_pct, tuple(a.canny) if a.canny else None)
+        a.crack_hi_pct, tuple(a.canny) if a.canny else None, a.line_hi_abs)
 
 
 if __name__ == "__main__":

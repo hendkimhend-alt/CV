@@ -81,6 +81,7 @@ DEFAULT_CFG = {
     "line_hi_pct": 80.0,         # 강한 기준 = 사진 안 중심선 점수의 상위 (100 − 이 값)% (line_hi_abs가 없을 때)
     "line_hi_abs": None,         # 고정 강한 기준 (모든 사진 같은 값) — E8-b: 32.5 ≈ 흔적 양 5.9%. 깨끗한 사진엔 흔적이 적게
     "line_lo_ratio": 0.4,        # 약한 기준 = 강한 기준 × 이 값
+    "line_thicken": 3,           # 거르기 전에 1px 흔적을 이 폭으로 굵게 — 거르기 규칙(면적 · 세장비 · 양쪽 확인)을 그대로 쓰려고 (최소 조정)
 }
 
 
@@ -127,6 +128,8 @@ def _crack_mask(gray, cfg):
         binary, score, hi = line_trace(gray, cfg)
         if cfg["link_dist"] > 0:
             binary = link_fragments(binary, cfg)
+        if cfg["line_thicken"] > 1:
+            binary = cv2.dilate(binary, _kernel(cfg["line_thicken"]))
         return binary, score, hi
     # 노면보다 어둡고 가는 구조만 밝게 남긴다
     bh = cv2.morphologyEx(gray, cv2.MORPH_BLACKHAT, _kernel(cfg["blackhat_ksize"]))
