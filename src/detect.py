@@ -82,6 +82,8 @@ DEFAULT_CFG = {
     "line_hi_abs": None,         # 고정 강한 기준 (모든 사진 같은 값) — E8-b: 32.5 ≈ 흔적 양 5.9%. 깨끗한 사진엔 흔적이 적게
     "line_lo_ratio": 0.4,        # 약한 기준 = 강한 기준 × 이 값
     "line_thicken": 3,           # 거르기 전에 1px 흔적을 이 폭으로 굵게 — 거르기 규칙(면적 · 세장비 · 양쪽 확인)을 그대로 쓰려고 (최소 조정)
+                                 # 1 = 굵게 안 함. 굵게 하면 2~3px 옆의 차선 테두리 · 경계선과 붙는 문제 (E9-b)
+    "crack_min_length": 0,       # >0이면 균열 크기 규칙을 면적 대신 길이(회전 사각형 긴 변, px)로 — 1px 흔적용
 }
 
 
@@ -332,7 +334,10 @@ def shape_features(pts, bh=None, hi=None):
 
 def classify(det, img_area, branch, cfg):
     area_ratio = det["area"] / img_area
-    if area_ratio < cfg["min_area_ratio"]:
+    if branch == "crack" and cfg["crack_min_length"] > 0:
+        if det["length"] < cfg["crack_min_length"]:
+            return "noise"
+    elif area_ratio < cfg["min_area_ratio"]:
         return "noise"
     # 규칙 1: 세장비 (+ 진하기)
     if (branch in ("crack", "any") and det["elong"] >= cfg["crack_min_elong"]
