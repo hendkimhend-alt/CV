@@ -78,7 +78,8 @@ DEFAULT_CFG = {
     # line: Hessian 선 점수 → 선 중심만 남기기(1px) → 중심선 위 이중 임계값 (Canny 방식을 선에 적용)
     "crack_find": "blackhat",
     "line_sigmas": (1.0, 1.5, 2.0),  # 가우시안 스케일 — 폭 1~4px 균열 (긴 변 1024 기준)
-    "line_hi_pct": 80.0,         # 강한 기준 = 사진 안 중심선 점수의 상위 (100 − 이 값)%
+    "line_hi_pct": 80.0,         # 강한 기준 = 사진 안 중심선 점수의 상위 (100 − 이 값)% (line_hi_abs가 없을 때)
+    "line_hi_abs": None,         # 고정 강한 기준 (모든 사진 같은 값) — E8-b: 32.5 ≈ 흔적 양 5.9%. 깨끗한 사진엔 흔적이 적게
     "line_lo_ratio": 0.4,        # 약한 기준 = 강한 기준 × 이 값
 }
 
@@ -173,24 +174,42 @@ def link_fragments(binary, cfg):
     if len(pts) < 2:
         return binary
     P, U, Lb = np.array(pts, np.float32), np.array(dirs, np.float32), np.array(labs)
-    D = P[None, :, :] - P[:, None, :]                       # D[i, j] = j − i
-    dist = np.hypot(D[..., 0], D[..., 1])
+    ii, jj = _near_pairs(P, cfg["link_dist"])             # 거리 ≤ link_dist 인 쌍만 (끝점이 수만 개여도 메모리 일정)
+    D = P[jj] - P[ii]                                       # i → j
+    dist = np.hypot(D[:, 0], D[:, 1])
     with np.errstate(invalid="ignore", divide="ignore"):
-        V = D / dist[..., None]
+        V = D / dist[:, None]
     cos = np.cos(np.radians(cfg["link_angle"]))
-    ok = ((dist > 0) & (dist <= cfg["link_dist"]) & (Lb[:, None] != Lb[None, :])
-          & ((U[:, None, :] * V).sum(-1) >= cos)            # i의 바깥 방향이 j 쪽을 향함
-          & ((U[None, :, :] * -V).sum(-1) >= cos))          # j의 바깥 방향이 i 쪽을 향함
-    ii, jj = np.nonzero(np.triu(ok))
+    ok = ((dist > 0) & (dist <= cfg["link_dist"]) & (Lb[ii] != Lb[jj])
+          & ((U[ii] * V).sum(-1) >= cos)                    # i의 바깥 방향이 j 쪽을 향함
+          & ((U[jj] * -V).sum(-1) >= cos))                  # j의 바깥 방향이 i 쪽을 향함
+    ii, jj, dist = ii[ok], jj[ok], dist[ok]
     out = binary.copy()
     used = set()
-    for k in np.argsort(dist[ii, jj], kind="stable"):
+    for k in np.lexsort((jj, ii, dist)):                    # 가까운 순서 (같으면 번호 순)
         i, j = int(ii[k]), int(jj[k])
         if i in used or j in used:
             continue
         used.update((i, j))
         cv2.line(out, tuple(int(v) for v in P[i]), tuple(int(v) for v in P[j]), 255, 2)
     return out
+
+
+def _near_pairs(P, d):
+    """점들 중 x · y 차이가 모두 d 이하인 쌍 (i < j) — x로 정렬해 창 안만 본다."""
+    order = np.argsort(P[:, 0], kind="stable")
+    xs, ys = P[order, 0], P[order, 1]
+    ends = np.searchsorted(xs, xs + d, side="right")
+    I, J = [], []
+    for a in range(len(order)):
+        if ends[a] > a + 1:
+            j = np.arange(a + 1, ends[a])
+            j = j[np.abs(ys[j] - ys[a]) <= d]
+            I.append(np.full(len(j), a)); J.append(j)
+    if not I:
+        return np.zeros(0, int), np.zeros(0, int)
+    I, J = order[np.concatenate(I)], order[np.concatenate(J)]
+    return np.minimum(I, J), np.maximum(I, J)
 
 
 def _line_open(bh, length, n_angles):
@@ -263,8 +282,11 @@ def line_trace(gray, cfg, hi_pct=None):
     """찾기(선 모양): Hessian 선 점수 → 중심선 → 중심선 위 이중 임계값 → 1px 흔적 지도."""
     score, angle = line_score(gray, cfg["line_sigmas"])
     center = line_centerline(score, angle)
-    vals = center[center > 0]
-    hi = float(np.percentile(vals, cfg["line_hi_pct"] if hi_pct is None else hi_pct)) if vals.size else 1.0
+    if cfg["line_hi_abs"] is not None and hi_pct is None:
+        hi = float(cfg["line_hi_abs"])
+    else:
+        vals = center[center > 0]
+        hi = float(np.percentile(vals, cfg["line_hi_pct"] if hi_pct is None else hi_pct)) if vals.size else 1.0
     hi = max(hi, 1e-6)
     trace = seeded(center >= hi * cfg["line_lo_ratio"], center >= hi)
     return cv2.ximgproc.thinning(trace), score, hi          # 폭 2px 선의 중심이 두 줄로 남는 경우를 1px로
