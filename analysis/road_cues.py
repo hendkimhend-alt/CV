@@ -26,57 +26,7 @@ from preprocess import geometry_preprocess, validate_config
 SRC = OUTPUT_DIR / "analysis" / "filter_features" / "features.csv"
 OUT = OUTPUT_DIR / "analysis" / "road_cues"
 CUES = ["color", "bright", "energy", "coherence", "corner"]
-SIGMA = 4.0
-
-
-def maps(ref):
-    hsv = cv2.cvtColor(ref, cv2.COLOR_BGR2HSV).astype(np.float32)
-    ang = hsv[..., 0] * (np.pi / 90.0)                       # OpenCV 색상 0~180 → 라디안
-    sat = hsv[..., 1] / 255.0
-    cx, cy, v = sat * np.cos(ang), sat * np.sin(ang), hsv[..., 2]
-    g = cv2.cvtColor(ref, cv2.COLOR_BGR2GRAY).astype(np.float32)
-    ix, iy = cv2.Sobel(g, cv2.CV_32F, 1, 0, ksize=3), cv2.Sobel(g, cv2.CV_32F, 0, 1, ksize=3)
-    a = cv2.GaussianBlur(ix * ix, (0, 0), SIGMA)
-    b = cv2.GaussianBlur(ix * iy, (0, 0), SIGMA)
-    c = cv2.GaussianBlur(iy * iy, (0, 0), SIGMA)
-    root = np.sqrt((a - c) ** 2 + 4 * b * b)
-    l1, l2 = (a + c + root) / 2, np.maximum((a + c - root) / 2, 0)
-    energy = l1 + l2
-    coh = np.where(energy > 1e-6, ((l1 - l2) / np.maximum(energy, 1e-6)) ** 2, 0)
-    return cx, cy, v, energy, coh, l2
-
-
-def ref_stats(m, H, W):
-    r = (slice(int(.60 * H), int(.80 * H)), slice(int(.30 * W), int(.70 * W)))
-    cx, cy, v, e, coh, l2 = (x[r] for x in m)
-    pts = np.stack([cx.ravel(), cy.ravel()], 1)
-    med = np.median(pts, 0)
-    spread = max(float(np.median(np.linalg.norm(pts - med, axis=1))), 0.02)
-    q1, q3 = np.percentile(v, [25, 75])
-    return dict(cmed=med, cspread=spread, vmed=float(np.median(v)), viqr=max(float(q3 - q1), 5.0),
-                emed=max(float(np.median(e)), 1e-3), cohm=float(coh.mean()), l2med=max(float(np.median(l2)), 1e-3))
-
-
-def ring(b, W, H):
-    x1, y1, x2, y2 = b
-    cx, cy, hw, hh = (x1 + x2) / 2, (y1 + y2) / 2, (x2 - x1) + 6, (y2 - y1) + 6
-    X1, Y1, X2, Y2 = max(0, int(cx - hw)), max(0, int(cy - hh)), min(W, int(cx + hw)), min(H, int(cy + hh))
-    m = np.ones((Y2 - Y1, X2 - X1), bool)
-    m[max(0, y1 - 2 - Y1):max(0, y2 + 2 - Y1), max(0, x1 - 2 - X1):max(0, x2 + 2 - X1)] = False
-    return (slice(Y1, Y2), slice(X1, X2)), m
-
-
-def cue_values(m, st, b, W, H):
-    sl, keep = ring(b, W, H)
-    if keep.sum() < 20:
-        return None
-    cx, cy, v, e, coh, l2 = (x[sl][keep] for x in m)
-    pts = np.stack([cx, cy], 1)
-    return {"color": float(np.linalg.norm(np.median(pts, 0) - st["cmed"]) / st["cspread"]),
-            "bright": float(abs(np.median(v) - st["vmed"]) / st["viqr"]),
-            "energy": float(abs(np.log(max(float(np.median(e)), 1e-3) / st["emed"]))),
-            "coherence": float(coh.mean() - st["cohm"]),
-            "corner": float(np.log(max(float(np.median(l2)), 1e-3) / st["l2med"]))}
+from roadcue import cue_values, maps, ref_stats   # 검출기와 같은 코드 (src/roadcue.py)
 
 
 def main():

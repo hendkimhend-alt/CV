@@ -102,12 +102,9 @@ def parse_overrides(items):
         if k not in DETECT_CFG:
             raise ValueError(f"error:--set {k} — detect 설정에 없는 키")
         try:
-            out[k] = int(v)
+            out[k] = json.loads(v)                 # 숫자 · {…} · […] · true/false
         except ValueError:
-            try:
-                out[k] = float(v)
-            except ValueError:
-                out[k] = v
+            out[k] = v
     return out
 
 

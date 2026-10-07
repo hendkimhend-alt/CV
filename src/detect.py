@@ -84,6 +84,10 @@ DEFAULT_CFG = {
     "line_thicken": 3,           # 거르기 전에 1px 흔적을 이 폭으로 굵게 — 거르기 규칙(면적 · 세장비 · 양쪽 확인)을 그대로 쓰려고 (최소 조정)
                                  # 1 = 굵게 안 함. 굵게 하면 2~3px 옆의 차선 테두리 · 경계선과 붙는 문제 (E9-b)
     "crack_min_length": 0,       # >0이면 균열 크기 규칙을 면적 대신 길이(회전 사각형 긴 변, px)로 — 1px 흔적용
+
+    # 노면 단서로 거르기 (src/roadcue.py) — {단서: 최댓값} 넘으면 버림. "resid_min": 직선 잔차가 이보다 작으면(너무 곧음) 버림
+    # 거르기 R1 (개발 세트): {"energy": 1.608, "coherence": 0.294, "color": 2.996}
+    "cue_filter": None,
 }
 
 
@@ -102,6 +106,14 @@ def detect(img, cfg=None):
 
     detections = []
     smooth = cv2.GaussianBlur(gray, (3, 3), 0).astype(np.float32) if cfg["valley_check"] else None
+    cue = None
+    if cfg["cue_filter"]:
+        if __package__:
+            from .roadcue import cue_values, line_resid, maps, ref_stats
+        else:
+            from roadcue import cue_values, line_resid, maps, ref_stats
+        cue_maps = maps(img if img.ndim == 3 else cv2.cvtColor(img, cv2.COLOR_GRAY2BGR))
+        cue = (cue_maps, ref_stats(cue_maps, H, W))
     for branch, mask, bh, hi in branches:
         for pts in _components(mask, cfg["group_ksize"]):
             det = shape_features(pts, bh, hi)
@@ -113,6 +125,19 @@ def detect(img, cfg=None):
                 det["valley"] = valley_score(smooth, pts, det["width"], cfg)
                 if det["valley"] < cfg["valley_min_ratio"]:
                     det["type"] = "noise"
+            if det["type"] == "crack" and cue is not None:
+                x, y, w, h = det["bbox"]
+                cv = cue_values(cue[0], cue[1], (x, y, x + w, y + h), W, H) or {}
+                cv["resid"] = line_resid(pts)
+                det["cues"] = cv
+                for k, t in cfg["cue_filter"].items():
+                    if k == "resid_min":
+                        bad = cv["resid"] < t
+                    else:
+                        bad = k in cv and cv[k] > t
+                    if bad:
+                        det["type"] = "noise"
+                        break
             if det["type"] != "noise" or cfg["keep_noise"]:
                 detections.append(det)
     return detections
