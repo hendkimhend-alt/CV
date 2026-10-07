@@ -70,8 +70,9 @@ def candidates(ref, cfg):
             kind = classify(d, H * W, branch, cfg)
             if branch == "pothole":
                 stage = "포트홀로 분류"
-            elif d["area"] / (H * W) < cfg["min_area_ratio"]:
-                stage = "너무 작음"
+            elif (d["length"] < cfg["crack_min_length"] if cfg.get("crack_min_length", 0) > 0
+                  else d["area"] / (H * W) < cfg["min_area_ratio"]):
+                stage = "너무 작음"                # detect.classify와 같은 크기 규칙 (길이 규칙을 켜면 길이로)
             elif kind != "crack":
                 stage = "덜 길쭉함"
             elif _touches_border(d["bbox"], W, H, cfg):
