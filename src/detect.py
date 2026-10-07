@@ -157,14 +157,15 @@ def _d0_mask(gray, cfg):
     return cv2.morphologyEx(edges, cv2.MORPH_CLOSE, _kernel(cfg["d0_close_ksize"]))
 
 
-def _crack_mask(gray, cfg):
+def _crack_mask(gray, cfg, with_angle=False):
+    """→ (흑백 흔적, 점수 지도, 강한 기준) · with_angle=True면 끝에 방향 지도(선을 가로지르는 방향, 라디안)도 — 선 모양 찾기에서만."""
     if cfg["crack_find"] == "line":
-        binary, score, hi = line_trace(gray, cfg)
+        binary, score, hi, angle = line_trace(gray, cfg, with_angle=True)
         if cfg["link_dist"] > 0:
             binary = link_fragments(binary, cfg)
         if cfg["line_thicken"] > 1:
             binary = cv2.dilate(binary, _kernel(cfg["line_thicken"]))
-        return binary, score, hi
+        return (binary, score, hi, angle) if with_angle else (binary, score, hi)
     # 노면보다 어둡고 가는 구조만 밝게 남긴다
     bh = cv2.morphologyEx(gray, cv2.MORPH_BLACKHAT, _kernel(cfg["blackhat_ksize"]))
     if cfg["line_len"] > 0:
@@ -178,7 +179,7 @@ def _crack_mask(gray, cfg):
     binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, _kernel(cfg["crack_close_ksize"]))
     if cfg["link_dist"] > 0:
         binary = link_fragments(binary, cfg)
-    return binary, bh, hi
+    return (binary, bh, hi, None) if with_angle else (binary, bh, hi)
 
 
 def link_fragments(binary, cfg):
@@ -315,8 +316,10 @@ def seeded(weak, strong):
     return (keep[labels] * 255).astype(np.uint8)
 
 
-def line_trace(gray, cfg, hi_pct=None):
-    """찾기(선 모양): Hessian 선 점수 → 중심선 → 중심선 위 이중 임계값 → 1px 흔적 지도."""
+def line_trace(gray, cfg, hi_pct=None, with_angle=False):
+    """찾기(선 모양): Hessian 선 점수 → 중심선 → 중심선 위 이중 임계값 → 1px 흔적 지도.
+    with_angle=True면 방향 지도도 돌려줌 (가장 센 σ에서 λ1 고유벡터 = 선을 가로지르는 방향, 연속 라디안 —
+    선이 뻗는 방향은 여기에 +90°). NMS 뒤에도 방향을 버리지 않기 위함 (논문 반영 0단계)."""
     score, angle = line_score(gray, cfg["line_sigmas"])
     center = line_centerline(score, angle)
     if cfg["line_hi_abs"] is not None and hi_pct is None:
@@ -326,7 +329,8 @@ def line_trace(gray, cfg, hi_pct=None):
         hi = float(np.percentile(vals, cfg["line_hi_pct"] if hi_pct is None else hi_pct)) if vals.size else 1.0
     hi = max(hi, 1e-6)
     trace = seeded(center >= hi * cfg["line_lo_ratio"], center >= hi)
-    return cv2.ximgproc.thinning(trace), score, hi          # 폭 2px 선의 중심이 두 줄로 남는 경우를 1px로
+    trace = cv2.ximgproc.thinning(trace)                       # 폭 2px 선의 중심이 두 줄로 남는 경우를 1px로
+    return (trace, score, hi, angle) if with_angle else (trace, score, hi)
 
 
 def _pothole_mask(gray, cfg):
