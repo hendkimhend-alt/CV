@@ -85,7 +85,8 @@ DEFAULT_CFG = {
                                  # 1 = 굵게 안 함. 굵게 하면 2~3px 옆의 차선 테두리 · 경계선과 붙는 문제 (E9-b)
     "crack_min_length": 0,       # >0이면 균열 크기 규칙을 면적 대신 길이(회전 사각형 긴 변, px)로 — 1px 흔적용
 
-    # 노면 단서로 거르기 (src/roadcue.py) — {단서: 최댓값} 넘으면 버림. "resid_min": 직선 잔차가 이보다 작으면(너무 곧음) 버림
+    # 노면 단서로 거르기 (src/roadcue.py) — {단서: 최댓값} 넘으면 버림. "…_min": 하한 — resid_min(너무 곧음) · depth_min(얕은 골)
+    # 노면 위 단서: "streak"(노면 결을 따라감, 최댓값) · "depth_min"
     # 거르기 R1 (개발 세트): {"energy": 1.608, "coherence": 0.294, "color": 2.996}
     "cue_filter": None,
 }
@@ -109,11 +110,15 @@ def detect(img, cfg=None):
     cue = None
     if cfg["cue_filter"]:
         if __package__:
-            from .roadcue import cue_values, line_resid, maps, ref_stats
+            from .roadcue import cue_values, line_resid, maps, onroad_values, ref_stats, tensor
         else:
-            from roadcue import cue_values, line_resid, maps, ref_stats
+            from roadcue import cue_values, line_resid, maps, onroad_values, ref_stats, tensor
         cue_maps = maps(img if img.ndim == 3 else cv2.cvtColor(img, cv2.COLOR_GRAY2BGR))
         cue = (cue_maps, ref_stats(cue_maps, H, W))
+        need_on = any(k in cfg["cue_filter"] for k in ("depth_min", "streak"))
+        J = tensor(gray) if need_on else None
+        if need_on and smooth is None:
+            smooth = cv2.GaussianBlur(gray, (3, 3), 0).astype(np.float32)
     for branch, mask, bh, hi in branches:
         for pts in _components(mask, cfg["group_ksize"]):
             det = shape_features(pts, bh, hi)
@@ -129,10 +134,12 @@ def detect(img, cfg=None):
                 x, y, w, h = det["bbox"]
                 cv = cue_values(cue[0], cue[1], (x, y, x + w, y + h), W, H) or {}
                 cv["resid"] = line_resid(pts)
+                if need_on:
+                    cv.update(onroad_values(pts, smooth, J, (x, y, x + w, y + h), W, H))
                 det["cues"] = cv
                 for k, t in cfg["cue_filter"].items():
-                    if k == "resid_min":
-                        bad = cv["resid"] < t
+                    if k.endswith("_min"):                      # 하한 (resid_min · depth_min): 이보다 작으면 버림
+                        bad = cv[k[:-4]] < t
                     else:
                         bad = k in cv and cv[k] > t
                     if bad:

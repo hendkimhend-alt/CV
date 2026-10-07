@@ -8,6 +8,10 @@
   coherence  정렬도 ((λ1−λ2)/(λ1+λ2))² 고리 평균 − 표본 평균                      (3-2)
   corner     log(λ2 중앙값 비) — 모서리                                           (3-2 Shi-Tomasi · 해리스)
 근거: 거르기 R1 (개발 세트) — 세기 · 정렬 · 색 세 단서로 진짜 14% 손실에 가짜 70% 버림
+
+노면 위 단서 (onroad_values) — 주변이 도로인 후보 중 균열과 질감 가르기 (노면 위 거르기 O1)
+  depth      (고리 밝기 중앙값 − 후보 밝기 평균) ÷ 고리 사분위 범위 — 작으면 얕은 골      (2-1 히스토그램)
+  streak     고리 구조 텐서 정렬도 × cos²(후보 방향 − 고리 결 방향) — 크면 노면 결을 따라감 (3-2)
 """
 import cv2
 import numpy as np
@@ -30,6 +34,13 @@ def maps(bgr):
     energy = l1 + l2
     coh = np.where(energy > 1e-6, ((l1 - l2) / np.maximum(energy, 1e-6)) ** 2, 0)
     return cx, cy, v, energy, coh, l2
+
+
+def tensor(gray):
+    """구조 텐서 성분 (Ix², IxIy, Iy² 를 σ로 평균) — 고리 전체를 더해 결 방향 · 정렬도를 구함."""
+    g = gray.astype(np.float32)
+    ix, iy = cv2.Sobel(g, cv2.CV_32F, 1, 0, ksize=3), cv2.Sobel(g, cv2.CV_32F, 0, 1, ksize=3)
+    return [cv2.GaussianBlur(v, (0, 0), SIGMA) for v in (ix * ix, ix * iy, iy * iy)]
 
 
 def ref_stats(m, H, W):
@@ -64,6 +75,20 @@ def cue_values(m, st, b, W, H):
             "energy": float(abs(np.log(max(float(np.median(e)), 1e-3) / st["emed"]))),
             "coherence": float(coh.mean() - st["cohm"]),
             "corner": float(np.log(max(float(np.median(l2)), 1e-3) / st["l2med"]))}
+
+
+def onroad_values(pts, smooth, J, b, W, H):
+    """b = (x1, y1, x2, y2) · smooth = 3×3 가우시안 회색 · J = tensor(gray) → {depth, streak}."""
+    sl, keep = ring(b, W, H)
+    rg = smooth[sl][keep]
+    q1, q3 = np.percentile(rg, [25, 75])
+    a, bb, c = (j[sl][keep].sum() for j in J)
+    coh = (np.sqrt((a - c) ** 2 + 4 * bb * bb) / max(a + c, 1e-6)) ** 2   # ((λ1−λ2)/(λ1+λ2))²
+    grad_dir = 0.5 * np.arctan2(2 * bb, a - c)                             # 밝기가 가장 많이 바뀌는 방향 → 결은 그에 직각
+    _, _, vt = np.linalg.svd(pts.astype(np.float64) - pts.mean(0), full_matrices=False)
+    line_dir = np.arctan2(vt[0, 1], vt[0, 0])
+    return {"depth": float((np.median(rg) - smooth[pts[:, 1], pts[:, 0]].mean()) / max(q3 - q1, 2.0)),
+            "streak": float(coh * np.cos(line_dir - (grad_dir + np.pi / 2)) ** 2)}
 
 
 def line_resid(pts):
