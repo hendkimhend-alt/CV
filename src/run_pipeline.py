@@ -24,17 +24,22 @@
   compare.csv   기준 조건 대비 F1 차이와 95% 범위, 의미 있는 차이인지 (그룹 × 종류 × 판정 기준)
   images/       결과 박스 그림 (--save-images N: 처음 N장, 0 = 저장 안 함, -1 = 전부)
   run_config.json  실행 설정·버전
+기록 (git에 올림): results/runs.csv — 정답이 있는 실행마다 조건 × 검출기 한 줄씩 덧붙인다 (in50 Recall · Precision ·
+  사진당 가짜, 설정 이름, 코드 버전). --no-log면 안 남김
 
 실행:
   python src/run_pipeline.py                      # 제공 13장
   python src/run_pipeline.py --dataset rdd_dev    # RDD 개발 세트 563장 (정답 있음 → precision·recall·F1)
   python src/run_pipeline.py --dataset rdd --limit 50 --save-images 10
+  python src/run_pipeline.py --dataset rdd_dev --config configs/p2bd.json   # 저장된 설정으로 (검출기 최종)
 """
 import argparse
 import csv
 import json
 import platform
+import subprocess
 import time
+from pathlib import Path
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 
@@ -53,6 +58,11 @@ from visualize import draw_detections
 DETECTORS = ("D0", "D1")
 QUALITY_KEYS = ("gray_mean", "block_mean_std_4x4", "laplacian_variance", "noise_sigma", "saturation_ratio")
 CANNY_EDGES = (100, 200)        # 에지 수 = 13장 실측(표1)과 같은 Canny 기준
+ROOT = Path(__file__).resolve().parent.parent
+RUN_LOG = ROOT / "results" / "runs.csv"
+# --config 파일에 쓸 수 있는 키 = 아래 명령줄 옵션 이름 (- 대신 _). "set"은 --set과 같은 detect 설정 사전
+CONFIG_KEYS = {"roi", "conditions", "detectors", "valley_ratio", "crack_lo_ratio", "crack_hi_pct", "link_dist",
+               "line_hi_abs", "canny", "flatten_ksize", "set", "description"}
 
 
 def new_run_dir(parent):
@@ -108,6 +118,63 @@ def parse_overrides(items):
     return out
 
 
+def load_config(path):
+    """--config 파일 → 명령줄 기본값 사전. 모르는 키는 실행 전에 오류 (오타로 설정이 조용히 빠지지 않게)."""
+    cfg = json.loads(Path(path).read_text(encoding="utf-8"))
+    unknown = set(cfg) - CONFIG_KEYS
+    if unknown:
+        raise ValueError(f"error:--config {path} — 모르는 키 {sorted(unknown)} (쓸 수 있는 키: {sorted(CONFIG_KEYS)})")
+    for k in cfg.get("set", {}):
+        if k not in DETECT_CFG:
+            raise ValueError(f"error:--config {path} — set.{k}는 detect 설정에 없는 키")
+    return cfg
+
+
+def git_version():
+    """코드 버전 = 커밋 앞 7자리, 커밋 안 된 코드 변경(src/ · configs/)이 있으면 +수정. git이 없으면 빈 값."""
+    try:
+        sha = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=ROOT, capture_output=True, text=True,
+                             check=True).stdout.strip()
+        dirty = subprocess.run(["git", "status", "--porcelain", "src", "configs"], cwd=ROOT, capture_output=True,
+                               text=True).stdout.strip()
+        return sha + ("+수정" if dirty else "")
+    except (OSError, subprocess.CalledProcessError):
+        return ""
+
+
+def log_run(run_dir, rows, dataset, limit, config_name, note):
+    """results/runs.csv에 이 실행을 덧붙인다 — 조건 × 검출기마다 한 줄, 판정 기준 in50, 전체 사진 기준.
+    Recall = 맞힌 정답 ÷ 정답 수(ROI 밖으로 잘린 정답 포함) · Precision = 맞힌 후보 ÷ (맞힌 후보 + 가짜)
+    · 사진당 가짜 = 가짜 ÷ 정답이 있는 사진 수 (summary.csv의 in50 값과 같은 계산)."""
+    with_gt = [r for r in rows if r["has_gt"]]
+    if not with_gt:
+        return
+    when = datetime.now(timezone(timedelta(hours=9))).strftime("%Y-%m-%d %H:%M")
+    out = []
+    for cond, det in dict.fromkeys((r["condition"], r["detector"]) for r in with_gt):
+        rs = [r for r in with_gt if r["condition"] == cond and r["detector"] == det]
+        row = {"when": when, "run": run_dir.name, "config": config_name or "", "dataset": dataset,
+               "n_images": len(rs), "limit": limit or "", "condition": cond, "detector": det}
+        for kind in KINDS:
+            tp, fp, fn = (sum(r[f"{kind}_in50_{k}"] for r in rs) for k in ("tp", "fp", "fn"))
+            p, r_, f1 = prf(tp, fp, fn)
+            row.update({f"{kind}_gt": sum(r[f"{kind}_n_gt"] for r in rs), f"{kind}_hit": tp, f"{kind}_fake": fp,
+                        f"{kind}_recall": None if r_ is None else round(r_, 4),
+                        f"{kind}_precision": None if p is None else round(p, 4),
+                        f"{kind}_f1": None if f1 is None else round(f1, 4),
+                        f"{kind}_fake_per_img": round(fp / len(rs), 2)})
+        row.update({"code": git_version(), "note": note or ""})
+        out.append(row)
+    new = not RUN_LOG.exists()
+    RUN_LOG.parent.mkdir(parents=True, exist_ok=True)
+    with open(RUN_LOG, "a", encoding="utf-8-sig" if new else "utf-8", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=list(out[0]), lineterminator="\n")   # git과 같은 LF
+        if new:
+            w.writeheader()
+        w.writerows(out)
+    print(f"기록 → {RUN_LOG.relative_to(ROOT)} ({len(out)}줄)")
+
+
 def count_edges(gray):
     return int((cv2.Canny(gray, *CANNY_EDGES) > 0).sum())
 
@@ -115,7 +182,7 @@ def count_edges(gray):
 def run(dataset="provided", limit=None, conditions=CONDITIONS, detectors=DETECTORS,
         keypoints=True, save_images=5, n_boot=1000, reference=("P1+", "D1"), roi="bottom_half", flatten_ksize=None,
         valley_ratio=None, crack_lo_ratio=None, link_dist=None, crack_hi_pct=None, canny=None, line_hi_abs=None,
-        overrides=None):
+        overrides=None, config_name=None, note="", log=True):
     for cond in conditions:
         parse_condition(cond)                                    # 잘못된 조건 이름은 실행 전에 오류
     for det_name in detectors:
@@ -215,11 +282,13 @@ def run(dataset="provided", limit=None, conditions=CONDITIONS, detectors=DETECTO
         "detectors": list(detectors), "preprocess_cfg": cfg_a, "detect_cfg": DETECT_CFG, "valley_ratio": valley_ratio, "crack_lo_ratio": crack_lo_ratio, "link_dist": link_dist,
         "crack_hi_pct": crack_hi_pct, "canny": canny, "line_hi_abs": line_hi_abs, "overrides": overrides,
         "edges": f"Canny{CANNY_EDGES}", "keypoints": "SIFT" if keypoints else None,
-        "bootstrap": n_boot, "reference": list(reference),
+        "bootstrap": n_boot, "reference": list(reference), "config": config_name, "code": git_version(), "note": note,
         "versions": {"python": platform.python_version(), "opencv": cv2.__version__, "numpy": np.__version__},
     }, ensure_ascii=False, indent=2), encoding="utf-8")
     print_table(summary)
     print_compare(compare)
+    if log:
+        log_run(run_dir, rows, name, limit, config_name, note)
     print(f"완료 → {run_dir}")
     return run_dir
 
@@ -297,6 +366,9 @@ def print_compare(compare):
 
 def main():
     p = argparse.ArgumentParser(description="전체 실행: 전처리(A) → 검출(B) → 평가")
+    p.add_argument("--config", help="저장된 설정 파일 (예: configs/p2bd.json) — 그 안의 값이 기본값, 명령줄에 같이 쓴 옵션이 우선")
+    p.add_argument("--note", default="", help="results/runs.csv에 같이 남길 메모")
+    p.add_argument("--no-log", action="store_true", help="results/runs.csv에 기록하지 않음")
     p.add_argument("--dataset", default="provided", help="provided / captured / rdd / rdd_dev / rdd_test 또는 폴더 경로")
     p.add_argument("--limit", type=int, help="처음 N장만")
     p.add_argument("--conditions", nargs="+", default=list(CONDITIONS),
@@ -319,10 +391,15 @@ def main():
     p.add_argument("--flatten-ksize", type=int, help="조명 펴기 배경 크기 (긴 변 1024 기준 픽셀, 기본 61)")
     p.add_argument("--roi", default="bottom_half",
                    help="노면 영역: bottom_half(기본) / full(전체) / bottom_<N>(아래쪽 N%%만, 예: bottom_60) / auto(사진마다 도로 시작 높이)")
+    pre, _ = p.parse_known_args()
+    cfg = load_config(pre.config) if pre.config else {}
+    p.set_defaults(**{k: v for k, v in cfg.items() if k not in ("set", "description")})
     a = p.parse_args()
+    overrides = {**cfg.get("set", {}), **parse_overrides(a.set)}          # 명령줄 --set이 설정 파일보다 우선
     run(a.dataset, a.limit, tuple(a.conditions), tuple(a.detectors), not a.no_keypoints, a.save_images,
         a.bootstrap, tuple(a.reference.split("/")), a.roi, a.flatten_ksize, a.valley_ratio, a.crack_lo_ratio, a.link_dist,
-        a.crack_hi_pct, tuple(a.canny) if a.canny else None, a.line_hi_abs, parse_overrides(a.set))
+        a.crack_hi_pct, tuple(a.canny) if a.canny else None, a.line_hi_abs, overrides,
+        Path(a.config).stem if a.config else None, a.note, not a.no_log)
 
 
 if __name__ == "__main__":
