@@ -308,6 +308,13 @@ python src/run_pipeline.py --dataset rdd_dev --config configs/p2bd.json --set cr
 - 기록을 남기기 싫은 시험 실행은 `--no-log`. `--limit`으로 일부만 돌린 것도 기록되며 `limit` 칸에 장수가 남습니다
 - 공유: 실험 후 `results/runs.csv` · `results/experiments.md` · 새 `configs/*.json`을 커밋해서 올립니다 (`outputs/`는 올리지 않음)
 
+### 4-1. 찾기를 바꿨으면 강한 기준부터 맞추기
+
+```bash
+python analysis/calibrate.py --config configs/p2bd.json --set guided_filter='{"r":4,"eps":"var","eps_scale":2.0}' --save configs/새이름.json
+```
+강한 흔적 총수를 기준과 같게 하는 `line_hi_abs`를 찾아 새 설정에 넣습니다 (이유 · 언제 필요한지는 [`EVALUATION.md`](EVALUATION.md) 3절 ③).
+
 ### 5. 두 실행 비교 — 의미 있는 차이인가
 
 ```bash
@@ -316,6 +323,7 @@ python analysis/compare_runs.py 기준=run_20261008_005056 새것=run_<시각>
 - 같은 사진끼리 짝지어 1000번 다시 뽑아 Recall · Precision 차이의 **95% 범위**를 냅니다. 범위가 0을 포함하지 않으면 ✱
 - 전체 · 흐림 · 국소 조도 · 정상 그룹별로 나옵니다. 포트홀은 `--kind pothole`
 - 실행 안에 조건 × 검출기가 여러 개면 `--pick none/D1hv`처럼 하나를 고릅니다
+- 여러 값 중 고를 때는 `--split`: 튜닝 394 · 검증 169로 나눠 보여 줍니다 (튜닝에서 고르고 검증에서 확인)
 
 ### 6. 데이터 세트 규칙
 

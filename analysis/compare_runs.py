@@ -11,6 +11,8 @@
   python analysis/compare_runs.py 기준=run_20261008_005056 새것=run_20261008_134345 --kind pothole
   인자 = outputs/pipeline/ 아래 실행 폴더 이름 또는 경로 (이름=폴더로 표의 이름을 붙일 수 있음)
   실행 안에 조건 × 검출기가 여러 개면 --pick 조건/검출기 로 고른다 (예: --pick none/D1hv)
+  --split: 개발 세트를 튜닝 394 · 검증 169로 나눠서 (labels/split_rdd_dev.csv) — 여러 값 중 고를 때 튜닝에서 고르고
+           검증에서 확인 (10/8 실험과 같은 계산: 2000번 · seed 20261008)
 """
 import argparse
 import csv
@@ -25,6 +27,7 @@ from paths import OUTPUT_DIR  # noqa: E402
 from stats import row_tags  # noqa: E402
 
 GROUPS = ("all", "blur", "local_illumination", "normal")
+SPLIT_CSV = ROOT / "labels" / "split_rdd_dev.csv"
 
 
 def load(arg, pick):
@@ -52,8 +55,12 @@ def main():
     p.add_argument("runs", nargs="+", help="실행 폴더 이름 또는 이름=폴더 (2개 이상)")
     p.add_argument("--kind", default="crack", choices=("crack", "pothole"))
     p.add_argument("--pick", help="조건/검출기 (실행 안에 여러 개일 때)")
-    p.add_argument("--n-boot", type=int, default=1000)
+    p.add_argument("--split", action="store_true", help="그룹 대신 튜닝 · 검증으로 나눠 비교 (개발 세트 실행만)")
+    p.add_argument("--n-boot", type=int, help="부트스트랩 횟수 (기본 1000, --split이면 2000)")
+    p.add_argument("--seed", type=int, help="기본 20261006, --split이면 20261008")
     a = p.parse_args()
+    n_boot = a.n_boot or (2000 if a.split else 1000)
+    seed = a.seed or (20261008 if a.split else 20261006)
     if len(a.runs) < 2:
         raise SystemExit("error:비교할 실행이 2개 이상 필요")
     runs = [load(r, a.pick) for r in a.runs]
@@ -62,15 +69,27 @@ def main():
     for name, data in runs[1:]:
         if set(data) != set(base):
             raise SystemExit(f"error:{name}의 사진 목록이 기준과 다름 (같은 데이터 세트 · 같은 --limit인지 확인)")
-    tags = {im: row_tags(base[im]) for im in imgs}
-    rng = np.random.default_rng(20261006)
+    if a.split:
+        part = {r["image"]: r["split"] for r in csv.DictReader(open(SPLIT_CSV, encoding="utf-8"))}
+        missing = [im for im in imgs if im not in part]
+        if missing:
+            raise SystemExit(f"error:--split은 rdd_dev 실행만 — 분할에 없는 사진 {len(missing)}장 (예: {missing[0]})")
+        tags = {im: [part[im]] for im in imgs}
+        groups = ("tune", "val")
+    else:
+        tags = {im: row_tags(base[im]) for im in imgs}
+        groups = GROUPS
     k = a.kind
-    print(f"종류 {k} · 판정 기준 in50 · 기준 = {base_name} · ✱ = 짝지은 95% 범위가 0을 포함하지 않음")
-    for group in GROUPS:
+    print(f"종류 {k} · 판정 기준 in50 · 기준 = {base_name} · ✱ = 짝지은 95% 범위가 0을 포함하지 않음"
+          + (" · 튜닝 · 검증으로 나눔" if a.split else ""))
+    rng = None if a.split else np.random.default_rng(seed)
+    for group in groups:
         gi = [im for im in imgs if group in tags[im]]
         if not gi:
             continue
-        idx = rng.integers(0, len(gi), size=(a.n_boot, len(gi)))
+        if a.split:                                 # 묶음마다 새로 (10/8 튜닝 · 검증 비교와 같은 계산)
+            rng = np.random.default_rng(seed)
+        idx = rng.integers(0, len(gi), size=(n_boot, len(gi)))
         cnt = {n: np.array([[float(d[im][f"{k}_in50_{x}"]) for x in ("tp", "fp", "fn")] for im in gi]) for n, d in runs}
         bb = stat(cnt[base_name][idx].sum(1))
         b0 = stat(cnt[base_name].sum(0))
