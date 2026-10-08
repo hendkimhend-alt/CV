@@ -1,4 +1,13 @@
-"""공통 ROI·Resize, 품질값 자동 분류와 세 전처리 조건."""
+"""공통 ROI·Resize, 품질값 자동 분류와 전처리 조건.
+
+조건 = 켤 보정 단계 목록. 단계는 항상 STAGE_ORDER 순서로 적용한다 (입력 순서와 무관).
+- flatten(조명 펴기): 그림자 처리. ROI · 크기 바로 다음 — 조명이 가장 근본적인 문제라 대비 · 선명도 · 잡음 보정보다
+  먼저, 전체 밝기도 같이 맞추므로 감마보다 먼저 (2차 실험 순서, 05번 노트)
+- 미리 정한 묶음: P0_reference(없음) · P1(gamma+gaussian) · P1+(gamma+clahe+unsharp+gaussian)
+- 직접 지정: "gamma+gaussian"처럼 단계를 +로 잇는다. "none" = 보정 없음
+- unsharp는 흐림(blur)으로 분류된 사진에만 적용된다 (1차 설계와 같음)
+실험 원칙: 이미 정한 단계는 켜고, 아직 안 정한 단계는 끈다 → 원하는 단계만 켜서 비교할 수 있게
+"""
 
 from __future__ import annotations
 
@@ -11,7 +20,9 @@ from functools import lru_cache
 import cv2
 import numpy as np
 
-CONDITIONS = ("P0_reference", "P1", "P1+")
+CONDITIONS = ("P0_reference", "P1", "P1+")                # 미리 정한 묶음 (A.py 그래프 등에서 사용)
+STAGE_ORDER = ("flatten", "gamma", "clahe", "unsharp", "gaussian")     # 보정 단계 적용 순서
+PRESETS = {"P0_reference": (), "P1": ("gamma", "gaussian"), "P1+": ("gamma", "clahe", "unsharp", "gaussian")}
 VALID_TAGS = {"blur", "local_illumination", "normal", "unclassified"}
 # 기능: 보정 전 ROI·Resize 영상의 품질값으로 그룹을 자동 결정한다.
 # 특징: 경계값 50·44는 포함하지 않는다. 필요하면 아래 숫자만 수정한다.
@@ -27,6 +38,9 @@ DEFAULT_CONFIG = {
     "gaussian": {"kernel": 3, "sigma": 0.8},
     "clahe": {"clip_limit": 2.0, "tile_grid": [8, 8], "channel": "LAB_L"},
     "unsharp": {"amount": 0.5, "sigma": 1.0},
+    # 조명 펴기: 큰 closing으로 가늘고 어두운 것(균열)을 지운 "조명 배경" → 밝기(L) ÷ 배경 × target
+    # ksize = closing 크기(긴 변 1024 기준 픽셀). 균열 폭보다 크고 그림자보다 작아야 함 — 후보 31 · 61 · 121
+    "flatten": {"ksize": 61, "target": 128, "channel": "LAB_L"},
 }
 GEOMETRY_COLUMNS = [
     "original_width", "original_height", "crop_x", "crop_y", "crop_width", "crop_height",
@@ -36,7 +50,7 @@ GEOMETRY_COLUMNS = [
 PARAMETER_COLUMNS = [
     "gamma", "gamma_channel", "gaussian_kernel", "gaussian_sigma", "clahe_clip_limit",
     "clahe_tile_width", "clahe_tile_height", "clahe_channel", "unsharp_applied",
-    "unsharp_amount", "unsharp_sigma",
+    "unsharp_amount", "unsharp_sigma", "flatten_ksize", "flatten_target",
 ]
 
 
@@ -53,13 +67,24 @@ def check_number(value, label, minimum=0, integer=False, strict=False):
         raise ValueError(f"error:{label} 값 또는 범위 오류")
 
 
+# 기능: "bottom_<N>" 형식이면 N(사진 아래쪽에서 남길 높이 %, 1~100)을 돌려준다. 아니면 None.
+# 특징: bottom_half는 기존 결과를 그대로 재현하려고 따로 둔다 (bottom_50과 홀수 높이에서 1픽셀 다를 수 있음).
+def roi_bottom_percent(roi):
+    if not isinstance(roi, str) or not roi.startswith("bottom_") or roi == "bottom_half":
+        return None
+    text = roi[len("bottom_"):]
+    if not text.isdigit() or not 1 <= int(text) <= 100:
+        raise ValueError("error:ROI bottom_<N>의 N은 1~100 정수 (아래쪽에서 남길 높이 %)")
+    return int(text)
+
+
 # 기능: ROI 형식과 좌표·크기를 검사한다.
 # 특징: 이미지 경계 검사는 실제 해상도를 아는 geometry_preprocess에서 수행한다.
 def check_roi(roi):
-    if isinstance(roi, str) and roi in {"bottom_half", "full"}:
+    if isinstance(roi, str) and (roi in {"bottom_half", "full", "auto"} or roi_bottom_percent(roi)):
         return
     if not isinstance(roi, list) or len(roi) != 4:
-        raise ValueError("error:ROI는 bottom_half/full 또는 [x,y,width,height]")
+        raise ValueError("error:ROI는 bottom_half/full/auto/bottom_<N> 또는 [x,y,width,height]")
     for index, value in enumerate(roi):
         check_number(value, "roi", 0 if index < 2 else 1, integer=True)
 
@@ -106,6 +131,10 @@ def validate_config(updates=None):
         raise ValueError("error:tile_grid는 [가로 타일 수,세로 타일 수]")
     for value in tiles:
         check_number(value, "clahe.tile_grid", 1, integer=True)
+    check_number(cfg["flatten"]["ksize"], "flatten.ksize", 3, integer=True)
+    check_number(cfg["flatten"]["target"], "flatten.target", strict=True)
+    if cfg["flatten"]["target"] > 255 or cfg["flatten"]["channel"] != "LAB_L":
+        raise ValueError("error:flatten.target은 0~255, 채널은 LAB_L")
     if cfg["gamma"]["channel"] != "BGR" or cfg["clahe"]["channel"] != "LAB_L":
         raise ValueError("error:Gamma는 BGR, CLAHE는 LAB_L 채널")
     return cfg
@@ -179,6 +208,17 @@ def geometry_preprocess(img, cfg, image_id=""):
         x, y, width, height = 0, original_h // 2, original_w, original_h - original_h // 2
     elif roi == "full":
         x, y, width, height = 0, 0, original_w, original_h
+    elif roi == "auto":
+        # 사진마다 도로가 시작하는 높이를 찾아 그 위만 자름 (src/roi.py)
+        if __package__:
+            from .roi import road_top
+        else:
+            from roi import road_top
+        y = round(original_h * road_top(img))
+        x, width, height = 0, original_w, original_h - y
+    elif roi_bottom_percent(roi):
+        height = max(1, round(original_h * roi_bottom_percent(roi) / 100))
+        x, y, width = 0, original_h - height, original_w
     else:
         x, y, width, height = roi
     if x + width > original_w or y + height > original_h:
@@ -220,6 +260,25 @@ def apply_gamma(img, gamma):
     return cv2.LUT(img, gamma_lut(float(gamma)))
 
 
+# 기능: 조명 펴기 — Lab L 채널을 "조명 배경"으로 나눠 그림자 · 밝기 차이를 고르게 한다.
+# 특징: 배경 = 큰 closing(수업 모폴로지: 가늘고 어두운 균열은 지우고, 그보다 큰 그림자 · 조명은 남김)
+#       → 가우시안으로 매끄럽게. 결과 L = L ÷ 배경 × target → 모든 사진의 노면 밝기가 target 근처로 맞춰진다.
+#       색(a · b)은 그대로. 그림자 경계 근처에는 배경 크기만큼 띠 모양 자국이 남을 수 있다.
+def flatten_background(lightness, cfg):
+    k = cfg["ksize"]
+    closed = cv2.morphologyEx(lightness, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_RECT, (k, k)),
+                              borderType=cv2.BORDER_REPLICATE)
+    return cv2.GaussianBlur(closed.astype(np.float32), (0, 0), k / 4, borderType=cv2.BORDER_REFLECT_101)
+
+
+def apply_flatten(img, cfg):
+    lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
+    lightness = lab[:, :, 0]
+    background = np.maximum(flatten_background(lightness, cfg), 1.0)
+    lab[:, :, 0] = np.rint(np.clip(lightness.astype(np.float32) / background * cfg["target"], 0, 255)).astype(np.uint8)
+    return cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
+
+
 # 기능: Lab L 채널에만 CLAHE를 적용한다.
 # 특징: A1과 같은 색공간 변환·타일 개수·대비 제한값을 사용한다.
 def apply_clahe(img, cfg):
@@ -244,17 +303,32 @@ def apply_gaussian(img, cfg):
     return cv2.GaussianBlur(img, (kernel, kernel), cfg["sigma"], borderType=cv2.BORDER_REFLECT_101)
 
 
-# 기능: 공통 기준 영상에서 P0_reference·P1·P1+ 결과와 실제 적용 파라미터를 만든다.
-# 특징: P1+는 모두 CLAHE를 적용하고 자동 분류된 blur에만 Unsharp를 적용한다.
+# 기능: 조건 이름 → 켤 단계 튜플 (STAGE_ORDER 순서).
+# 특징: 묶음 이름(P0_reference·P1·P1+), "none", "gamma+gaussian"처럼 +로 이은 단계를 받는다.
+def parse_condition(condition):
+    if condition in PRESETS:
+        return PRESETS[condition]
+    if not isinstance(condition, str) or not condition.strip():
+        raise ValueError(f"error:알 수 없는 전처리 조건 {condition}")
+    if condition == "none":
+        return ()
+    stages = [part.strip() for part in condition.split("+")]
+    unknown = [part for part in stages if part not in STAGE_ORDER]
+    if unknown or len(set(stages)) != len(stages):
+        raise ValueError(f"error:전처리 조건 {condition} — 단계는 {'/'.join(STAGE_ORDER)} 중 중복 없이 +로 연결")
+    return tuple(stage for stage in STAGE_ORDER if stage in stages)
+
+
+# 기능: 공통 기준 영상에 조건의 단계를 차례로 적용하고 실제 적용 파라미터를 기록한다.
+# 특징: unsharp는 자동 분류된 blur에만 적용한다. 태그가 없으면 기준 영상으로 분류한다.
 #       Gamma 캐시는 이미지마다 새로 만든다. 직접 전달한 태그는 같은 분류 함수의 결과여야 한다.
 def preprocess_condition(reference, cfg, condition, tags=None, gamma_cache=None):
-    if condition not in CONDITIONS:
-        raise ValueError(f"error:알 수 없는 전처리 조건 {condition}")
+    stages = parse_condition(condition)
     params = {name: None for name in PARAMETER_COLUMNS}
     params.update(stages=["ROI", "Resize"], gamma_channel="", clahe_channel="", unsharp_applied=False)
-    if condition == "P0_reference":
+    if not stages:
         return reference.copy(), params
-    if condition == "P1+":
+    if "unsharp" in stages:
         if tags is None:
             # 기능: 단독 호출에서도 runner와 같은 기준 영상으로 자동 분류한다.
             # 특징: metrics의 역방향 import를 피하기 위해 호출 시점에 불러온다.
@@ -266,38 +340,52 @@ def preprocess_condition(reference, cfg, condition, tags=None, gamma_cache=None)
         if not isinstance(tags, (str, tuple, list)) or (not isinstance(tags, str) and any(not isinstance(t, str) for t in tags)):
             raise ValueError("error:품질 태그는 문자열 또는 문자열 목록")
         tags = parse_tags(tags if isinstance(tags, str) else ";".join(tags))
-    if gamma_cache is None:
-        result = apply_gamma(reference, cfg["gamma"]["value"])
-    else:
-        if not isinstance(gamma_cache, dict):
-            raise ValueError("error:Gamma 캐시는 사전이어야 함")
-        # 기능: 캐시가 다른 기준 영상·Gamma에 재사용되면 이전 결과를 제거한다.
-        # 특징: 픽셀 전체를 해시하지 않고 배열 객체와 파라미터를 비교한다. 기준 영상은 수정하지 않는다.
-        if gamma_cache.get("reference") is not reference or gamma_cache.get("gamma") != cfg["gamma"]["value"]:
-            gamma_cache.clear()
-            gamma_cache.update(reference=reference, gamma=cfg["gamma"]["value"])
-        if "image" not in gamma_cache:
-            start = time.perf_counter()
-            gamma_cache["image"] = apply_gamma(reference, cfg["gamma"]["value"])
-            gamma_cache["ms"] = (time.perf_counter() - start) * 1000
-        result = gamma_cache["image"]
-    params["stages"].append("Gamma")
-    params.update(gamma=cfg["gamma"]["value"], gamma_channel="BGR")
-    if condition == "P1+":
-        result = apply_clahe(result, cfg["clahe"])
-        params["stages"].append("CLAHE")
-        params.update(clahe_clip_limit=cfg["clahe"]["clip_limit"],
-                      clahe_tile_width=cfg["clahe"]["tile_grid"][0],
-                      clahe_tile_height=cfg["clahe"]["tile_grid"][1], clahe_channel="LAB_L")
-        if "blur" in tags:
+    result = reference
+    for stage in stages:
+        if stage == "flatten":
+            result = apply_flatten(result, cfg["flatten"])
+            params["stages"].append("Flatten")
+            params.update(flatten_ksize=cfg["flatten"]["ksize"], flatten_target=cfg["flatten"]["target"])
+        elif stage == "gamma":
+            # 기준 영상에 바로 거는 경우만 캐시 (flatten 뒤면 매번 계산)
+            result = (_gamma_cached(reference, cfg, gamma_cache) if result is reference
+                      else apply_gamma(result, cfg["gamma"]["value"]))
+            params["stages"].append("Gamma")
+            params.update(gamma=cfg["gamma"]["value"], gamma_channel="BGR")
+        elif stage == "clahe":
+            result = apply_clahe(result, cfg["clahe"])
+            params["stages"].append("CLAHE")
+            params.update(clahe_clip_limit=cfg["clahe"]["clip_limit"],
+                          clahe_tile_width=cfg["clahe"]["tile_grid"][0],
+                          clahe_tile_height=cfg["clahe"]["tile_grid"][1], clahe_channel="LAB_L")
+        elif stage == "unsharp" and "blur" in tags:
             result = apply_unsharp(result, cfg["unsharp"])
             params["stages"].append("Unsharp")
             params.update(unsharp_applied=True, unsharp_amount=cfg["unsharp"]["amount"],
                           unsharp_sigma=cfg["unsharp"]["sigma"])
-    result = apply_gaussian(result, cfg["gaussian"])
-    params["stages"].append("Gaussian")
-    params.update(gaussian_kernel=cfg["gaussian"]["kernel"], gaussian_sigma=cfg["gaussian"]["sigma"])
-    return result, params
+        elif stage == "gaussian":
+            result = apply_gaussian(result, cfg["gaussian"])
+            params["stages"].append("Gaussian")
+            params.update(gaussian_kernel=cfg["gaussian"]["kernel"], gaussian_sigma=cfg["gaussian"]["sigma"])
+    return (result.copy() if result is reference else result), params
+
+
+# 기능: 기준 영상의 Gamma 결과 (flatten이 없으면 gamma가 기준 영상에 바로 적용된다).
+# 특징: 캐시가 다른 기준 영상·Gamma에 재사용되면 이전 결과를 제거한다. 픽셀 전체를 해시하지 않고
+#       배열 객체와 파라미터를 비교한다. 기준 영상은 수정하지 않는다.
+def _gamma_cached(reference, cfg, gamma_cache):
+    if gamma_cache is None:
+        return apply_gamma(reference, cfg["gamma"]["value"])
+    if not isinstance(gamma_cache, dict):
+        raise ValueError("error:Gamma 캐시는 사전이어야 함")
+    if gamma_cache.get("reference") is not reference or gamma_cache.get("gamma") != cfg["gamma"]["value"]:
+        gamma_cache.clear()
+        gamma_cache.update(reference=reference, gamma=cfg["gamma"]["value"])
+    if "image" not in gamma_cache:
+        start = time.perf_counter()
+        gamma_cache["image"] = apply_gamma(reference, cfg["gamma"]["value"])
+        gamma_cache["ms"] = (time.perf_counter() - start) * 1000
+    return gamma_cache["image"]
 
 
 # 기능: 다음 역할에서 이미지 한 장을 보정할 수 있도록 preprocess(img, cfg) 인터페이스를 제공한다.
