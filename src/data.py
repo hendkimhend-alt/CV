@@ -28,6 +28,11 @@ def list_images(dataset):
         with (LABELS_DIR / "split_rdd.csv").open(encoding="utf-8", newline="") as f:
             keep = {r["image"] for r in csv.DictReader(f) if r["split"] == dataset[4:]}
         return dataset, folder, [p for p in images if p.name in keep]
+    if dataset in ("rdd_tune", "rdd_val"):                 # 개발 세트를 다시 나눈 것 (labels/split_rdd_dev.csv, 10/8)
+        _, folder, images = list_images("rdd")
+        with (LABELS_DIR / "split_rdd_dev.csv").open(encoding="utf-8", newline="") as f:
+            keep = {r["image"] for r in csv.DictReader(f) if r["split"] == dataset[4:]}
+        return dataset, folder, [p for p in images if p.name in keep]
     folder = Path(DATASETS.get(dataset, dataset))
     if not folder.is_dir():
         raise ValueError(f"error:이미지 폴더 없음 {folder}")

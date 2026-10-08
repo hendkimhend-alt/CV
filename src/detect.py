@@ -102,7 +102,9 @@ DEFAULT_CFG = {
     "tensor_beta": 27.6,
     "tensor_gate": False,
     # 가이드 필터 (Chen et al. 2021 §2): 찾기 입력에만. None = 끔 · {"r": 반지름, "eps": "std" | "var" | 숫자}
-    "guided_filter": None,   # True: 찾기 점수 = 선 점수 × 전파 세기, 중심선은 원래 방향 (논문 §5.1 "곡선 띠 안의 중심")
+    "guided_filter": None,
+    # 중심선 NMS: False = 4방향으로 묶어서 (지금) · True = 연속 방향 보간 (논문 §5.1)
+    "nms_interp": False,   # True: 찾기 점수 = 선 점수 × 전파 세기, 중심선은 원래 방향 (논문 §5.1 "곡선 띠 안의 중심")
 }
 
 
@@ -334,6 +336,18 @@ def line_centerline(score, angle):
     return np.where(keep & (c > 0), c, 0).astype(np.float32)
 
 
+def line_centerline_interp(score, angle):
+    """선 중심만 남기기 — 연속 방향 (Chen et al. 2021 §5.1 "균열에 수직인 방향"): 선을 가로지르는 방향으로 ±1px 떨어진
+    두 점의 점수를 쌍선형 보간으로 구해, 둘보다 작지 않은 점만 (4방향으로 묶지 않음)."""
+    H, W = score.shape
+    yy, xx = np.mgrid[0:H, 0:W].astype(np.float32)
+    c, s = np.cos(angle).astype(np.float32), np.sin(angle).astype(np.float32)
+    a = cv2.remap(score, xx + c, yy + s, cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=0)
+    b = cv2.remap(score, xx - c, yy - s, cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=0)
+    keep = (score >= a) & (score >= b) & (score > 0)
+    return np.where(keep, score, 0).astype(np.float32)
+
+
 def seeded(weak, strong):
     """이중 임계값: 약한 픽셀 중 강한 픽셀과 이어진 덩어리만 살림."""
     n, labels = cv2.connectedComponents(weak.astype(np.uint8), connectivity=8)
@@ -423,15 +437,16 @@ def line_trace(gray, cfg, hi_pct=None, with_angle=False):
     with_angle=True면 방향 지도도 돌려줌 (가장 센 σ에서 λ1 고유벡터 = 선을 가로지르는 방향, 연속 라디안 —
     선이 뻗는 방향은 여기에 +90°). NMS 뒤에도 방향을 버리지 않기 위함 (논문 반영 0단계)."""
     score, angle = line_score(find_input(gray, cfg), cfg["line_sigmas"], cfg.get("line_scale_combine", "max"))
+    nms = line_centerline_interp if cfg.get("nms_interp", False) else line_centerline
     if cfg.get("tensor_propagate", 0) > 0:
         field, nangle = tensor_propagate(score, angle, cfg)
         if cfg.get("tensor_gate", False):                       # P2-b: 전파는 띠(지지)로만, 중심선은 원래 점수 · 방향으로
-            center = line_centerline(score * field, angle)
+            center = nms(score * field, angle)
         else:
-            center = line_centerline(field, nangle)
+            center = nms(field, nangle)
     else:
         field = propagate(score, angle, cfg) if cfg.get("line_propagate", 0) > 0 else score
-        center = line_centerline(field, angle)
+        center = nms(field, angle)
     if cfg["line_hi_abs"] is not None and hi_pct is None:
         hi = float(cfg["line_hi_abs"])
     else:
