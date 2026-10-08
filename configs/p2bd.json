@@ -1,0 +1,27 @@
+{
+  "description": "검출기 최종 (검출기만, 10/8) — Hessian 찾기 · 크기 평균 · 텐서 전파 · 노면 단서 · 깊이. 강한 기준은 흔적 총수를 맞춘 고정값",
+  "roi": "auto",
+  "conditions": [
+    "none"
+  ],
+  "detectors": [
+    "D1hv"
+  ],
+  "valley_ratio": 0.35,
+  "line_hi_abs": 128.609375,
+  "set": {
+    "line_thicken": 1,
+    "crack_min_length": 45,
+    "line_lo_ratio": 0.2,
+    "line_scale_combine": "mean",
+    "tensor_propagate": 3,
+    "tensor_beta": 27.6,
+    "tensor_gate": true,
+    "cue_filter": {
+      "energy": 1.6082,
+      "coherence": 0.2941,
+      "color": 2.9964,
+      "depth_min": 0.2666
+    }
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "description": "기준선 — 수업 기술만: 감마 + 가우시안 → Canny (ROI auto)",
+  "roi": "auto",
+  "conditions": [
+    "P1"
+  ],
+  "detectors": [
+    "D0"
+  ]
+}
