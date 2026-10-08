@@ -1,0 +1,13 @@
+{
+  "description": "이전 주 검출기 — Black-hat + 양쪽 확인 + 조각 잇기 15px (10/6)",
+  "roi": "auto",
+  "conditions": [
+    "none"
+  ],
+  "detectors": [
+    "D1vl"
+  ],
+  "valley_ratio": 0.35,
+  "crack_lo_ratio": 0.4,
+  "link_dist": 15
+}

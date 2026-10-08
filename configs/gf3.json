@@ -1,0 +1,32 @@
+{
+  "description": "p2bd + 가이드 필터(ε = 분산 × 2, 찾기 입력에만) — 전처리 담당에게 드리는 제안. 강한 기준은 가이드 필터에 맞춰 다시 맞춘 값",
+  "roi": "auto",
+  "conditions": [
+    "none"
+  ],
+  "detectors": [
+    "D1hv"
+  ],
+  "valley_ratio": 0.35,
+  "line_hi_abs": 3.0028860569000244,
+  "set": {
+    "line_thicken": 1,
+    "crack_min_length": 45,
+    "line_lo_ratio": 0.2,
+    "line_scale_combine": "mean",
+    "tensor_propagate": 3,
+    "tensor_beta": 27.6,
+    "tensor_gate": true,
+    "guided_filter": {
+      "r": 4,
+      "eps": "var",
+      "eps_scale": 2.0
+    },
+    "cue_filter": {
+      "energy": 1.6082,
+      "coherence": 0.2941,
+      "color": 2.9964,
+      "depth_min": 0.2666
+    }
+  }
+}

@@ -1,6 +1,7 @@
 > **이 저장소에는 두 버전이 함께 있습니다** (main 머지 2026-10-08, 두 README를 모두 그대로 남김)
 > - **`CV-main/`** — FINAL 버전 (고정 사다리꼴 ROI + FINAL 전처리 + D1 검출기). 설명은 바로 아래 첫 번째 README이며, 그 안의 경로(`src/...`)는 **`CV-main/` 기준**입니다.
 > - **맨 위 `src/`** — sj/dev 버전 (ROI auto · 보정 단계 켜고 끄기 · 조명 펴기 · 새 검출기). 설명은 아래 두 번째 README입니다.
+> - **실험을 돌리고 Recall · Precision을 같은 방법으로 재고 기록하려면** → 아래 [실행 · 측정 · 기록 가이드](#실행--측정--기록-가이드-맨-위-src)부터 보세요.
 
 ---
 
@@ -241,6 +242,92 @@ GitHub 웹에서 파일을 직접 업로드할 때는 `.gitignore`가 자동 필
 
 # CV — PBL 모듈 1: 저품질 도로 영상의 손상(균열·포트홀) 후보 추출
 
+## 실행 · 측정 · 기록 가이드 (맨 위 src/)
+
+누가 돌려도 **같은 방법으로 Recall · Precision을 재고, 결과가 자동으로 쌓이게** 하는 절차입니다. 이후 비교는 모두 이 방법으로 합니다.
+
+### 1. 준비 (한 번)
+
+```bash
+pip install -r requirements.txt          # Python 3.12 · OpenCV 4.13
+# gf3(가이드 필터)만 cv2.ximgproc가 필요 → opencv-python 대신 opencv-contrib-python (같은 버전)을 설치
+```
+RDD 이미지 · 정답을 `data/RDD2020_train/train/{img,ann}/`에 넣습니다 ([`data/README.md`](data/README.md)). 모든 명령은 **저장소 맨 위 폴더**에서 실행합니다.
+
+### 2. 저장된 설정으로 돌리기 (`--config`)
+
+설정은 [`configs/`](configs/)에 파일로 있습니다. 같은 파일을 쓰면 같은 결과가 나옵니다.
+
+| 설정 | 내용 | 개발 563장 R · P · 가짜/장 | 테스트 241장 R · P |
+|---|---|---|---|
+| `baseline` | 기준선 — 수업 기술만 (감마 + 가우시안 + Canny) | 0.278 · 0.066 · 5.2 | 0.255 · 0.066 |
+| `old_main` | 이전 주 검출기 (Black-hat + 양쪽 확인 + 잇기) | 0.360 · 0.080 · 5.5 | 0.328 · 0.091 |
+| **`p2bd`** | **검출기 최종** — Hessian 찾기 · 텐서 전파 · 노면 단서 · 깊이 | **0.571 · 0.075 · 9.3** | **0.482 · 0.077** |
+| `gf3` | `p2bd` + 가이드 필터 (전처리 담당 제안) | 0.555 · 0.104 · 6.3 | 0.482 · 0.110 |
+
+```bash
+# 빠른 확인 (20장, 1분 안팎)
+python src/run_pipeline.py --dataset rdd_dev --config configs/p2bd.json --limit 20 --no-keypoints
+
+# 개발 세트 전체 (약 9분 — 텐서 전파 때문. baseline · old_main은 약 2분)
+python src/run_pipeline.py --dataset rdd_dev --config configs/p2bd.json --no-keypoints --bootstrap 0 --note "무엇을 바꿨는지 한 줄"
+
+# 설정 일부만 바꿔서 시험: 명령줄 옵션이 설정 파일보다 우선
+python src/run_pipeline.py --dataset rdd_dev --config configs/p2bd.json --set crack_min_length=60 --note "길이 45 → 60"
+```
+- `--config` 파일의 키 = 명령줄 옵션 이름(`-` 대신 `_`) · `set` = `--set`과 같은 검출 설정 사전. 모르는 키는 실행 전에 오류
+- 설정을 새로 만들면 `configs/<이름>.json`으로 저장해 같이 올립니다 (설정 이름이 기록에 남음)
+- 결과 폴더: `outputs/pipeline/run_<시각>/` — `summary.csv`(묶음별 지표) · `results.csv`(사진별) · `run_config.json`(실제 설정 · 코드 버전) · `images/`
+
+### 3. 측정 방법 — Recall · Precision (in50)
+
+`src/evaluate.py` · 균열과 포트홀을 따로 잽니다.
+
+| | 정의 |
+|---|---|
+| **맞힘 (in50)** | 후보 박스 면적의 **절반 이상이 같은 종류 정답 박스 안**이면 그 정답을 맞힘. 정답 하나에 맞힘은 최대 1개 (겹침이 큰 쌍부터 짝짓기) |
+| 같은 정답 안의 추가 조각 | 맞힘도 가짜도 아님 (균열을 조각으로 잡는 건 봐주되, 잘게 쪼개 점수를 올리는 건 막음) |
+| **가짜** | 어느 정답과도 짝이 안 된 후보 |
+| **Recall** | 맞힌 정답 수 ÷ 전체 정답 수 — **ROI 밖으로 잘린 정답도 분모에 넣어 놓침으로 셈** (ROI를 좁혀 Recall을 부풀리지 못하게) |
+| **Precision** | 맞힌 후보 수 ÷ (맞힌 후보 + 가짜) |
+| **가짜/장** | 가짜 수 ÷ 정답이 있는 사진 수 |
+
+- 합산 방식: 사진마다 맞힘 · 가짜 · 놓침을 센 뒤 **전체를 더해서** 비율을 냅니다 (사진별 평균 아님)
+- `summary.csv`의 `crack_in50_recall` · `crack_in50_precision` · `crack_in50_fppi`(= 가짜/장)가 이 값입니다. iou50 · iou30도 같이 기록되지만 판정에는 in50만 씁니다
+- 목표: Recall 우선 + Precision 하한 — **달성 R 0.50 · P 0.10** · 도전 R 0.70 · P 0.30 · 지키는 선 P ≥ 0.066
+- ⚠️ `CV-main/`의 평가는 "겹치면 적중" + 잘린 정답 제외라 **숫자를 서로 비교하면 안 됩니다**
+
+### 4. 기록 — 자동 + 사람
+
+| 파일 | 누가 | 무엇 |
+|---|---|---|
+| [`results/runs.csv`](results/runs.csv) | **자동** — 정답이 있는 실행마다 한 줄씩 덧붙음 | 시각 · 실행 이름 · 설정 이름 · 데이터 · 균열/포트홀 정답 수 · 맞힘 · 가짜 · R · P · F1 · 가짜/장 · 코드 버전(커밋, 고친 채 돌리면 `+수정`) · `--note` 메모 |
+| [`results/experiments.md`](results/experiments.md) | **사람** — 실험 하나 끝날 때 | 무엇을 바꿨나 · 왜 · 미리 정한 결정 규칙 · 결과 · 결정(✅/❌) · 실행 이름 |
+
+- 기록을 남기기 싫은 시험 실행은 `--no-log`. `--limit`으로 일부만 돌린 것도 기록되며 `limit` 칸에 장수가 남습니다
+- 공유: 실험 후 `results/runs.csv` · `results/experiments.md` · 새 `configs/*.json`을 커밋해서 올립니다 (`outputs/`는 올리지 않음)
+
+### 5. 두 실행 비교 — 의미 있는 차이인가
+
+```bash
+python analysis/compare_runs.py 기준=run_20261008_005056 새것=run_<시각>
+```
+- 같은 사진끼리 짝지어 1000번 다시 뽑아 Recall · Precision 차이의 **95% 범위**를 냅니다. 범위가 0을 포함하지 않으면 ✱
+- 전체 · 흐림 · 국소 조도 · 정상 그룹별로 나옵니다. 포트홀은 `--kind pothole`
+- 실행 안에 조건 × 검출기가 여러 개면 `--pick none/D1hv`처럼 하나를 고릅니다
+
+### 6. 데이터 세트 규칙
+
+| 이름 | 장수 | 쓰는 곳 |
+|---|---|---|
+| `rdd_dev` | 563 | 실험 · 값 고르기는 여기서만 |
+| `rdd_tune` / `rdd_val` | 394 / 169 | `rdd_dev`를 나눈 것 — 튜닝에서 고르고 검증에서 확인 ([`labels/split_rdd_dev.csv`](labels/split_rdd_dev.csv)) |
+| `rdd_test` | 241 | **최종 확인용** — 결과를 보고 설정을 고치면 안 됨. 쓸 때마다 `results/experiments.md`의 "테스트 세트 사용 기록"에 적기 |
+| `provided` · `captured` | 13 · 촬영분 | 정답 CSV(`labels/<이름>.csv`)가 생기면 자동으로 평가 |
+
+---
+
+
 ```
 ① 사진 고치기 (개발 A)  →  ② 찾기 (개발 B)  →  ③ 재기 (개발 A)
 preprocess.py             detect.py           metrics.py · evaluate.py (초안)
@@ -290,7 +377,7 @@ RDD는 **dev 70% / test 30%로 나눠 쓴다** (`labels/split_rdd.csv`, 기준·
 `flatten`(조명 펴기 = 그림자 처리): 밝기(L)를 큰 closing으로 만든 "조명 배경"으로 나눠 그림자 · 밝기 차이를 고르게 함. 배경 크기는 `--flatten-ksize`(기본 61).
 실험 원칙: 이미 정한 단계는 켜고, 아직 안 정한 단계는 끈다.
 
-**평가 지표** — 개선 판정은 박스 단위 **F1** 하나로 한다 (`src/evaluate.py`). 정답 판정 기준 3개를 모두 기록한다:
+**평가 지표** — 지금 판정은 위 [가이드 3절](#3-측정-방법--recall--precision-in50) (in50 Recall 우선 + Precision 하한). 아래는 처음 정한 방법의 기록: 박스 단위 **F1** (`src/evaluate.py`). 정답 판정 기준 3개를 모두 기록한다:
 `iou50` IoU > 0.5 (표준, RDD 대회와 같은 정의) / `iou30` IoU > 0.3 / `in50` 후보 면적의 절반 이상이 정답 박스 안 (같은 정답 안의 추가 조각은 제외).
 기준선에서 "조건 간 차이를 오차 범위보다 크게 구분하는 기준 중 가장 엄격한 것"을 골라 이후 실험에 고정한다.
 오차 범위는 사진 단위 부트스트랩(`--bootstrap 1000`, `src/stats.py`)으로 구하고, 콘솔 마지막 표에 판정 기준별로 "의미 있는 차이" 수가 나온다.
