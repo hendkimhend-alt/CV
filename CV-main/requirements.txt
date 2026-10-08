@@ -1,0 +1,5 @@
+# 현재 Windows / Python 3.14.7 환경에서 실행·테스트한 버전.
+# cv2를 공유하는 다른 OpenCV 배포판과 함께 설치하지 않는다.
+opencv-python-headless==4.10.0.84
+numpy==2.4.4
+matplotlib==3.10.8

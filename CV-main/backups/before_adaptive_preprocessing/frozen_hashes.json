@@ -1,0 +1,26 @@
+﻿[
+    {
+        "file":  "src\\detect.py",
+        "sha256":  "d923898e30308223f07bfc0d1cfa2ea37dc7bd7ac8ecb18d23e28d0fb858844f"
+    },
+    {
+        "file":  "src\\evaluate.py",
+        "sha256":  "1bfb8eb17511385f0e9416e0ca3ead6dfcc783e002550d51d3bcacd2d4aff7b9"
+    },
+    {
+        "file":  "src\\metrics.py",
+        "sha256":  "ba5531e2980fd3bd2494bf39f862efa722a92727b627dcb3c5faf9125af1c211"
+    },
+    {
+        "file":  "src\\data.py",
+        "sha256":  "2e14c740f01eec4cee7cbe92ac7e12e8a715fa452afadd270a03084bc2e94d95"
+    },
+    {
+        "file":  "src\\roi.py",
+        "sha256":  "cee6f77225b01300b6b0bfa1f14ea98d96cd5627bb5a29a608dad3b8cac44ef1"
+    },
+    {
+        "file":  "labels\\split_rdd.csv",
+        "sha256":  "2344b86da60b7c201660f3b5cb0c840ee2bc662d3c8932221a262a02ff1eaf91"
+    }
+]

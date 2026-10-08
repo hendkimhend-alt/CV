@@ -1,0 +1,190 @@
+"""
+전체 실행: FINAL 전처리 → 고정 검출기 → GT 평가·CSV 저장.
+
+사진마다:
+  FINAL JSON의 사다리꼴 ROI·1024 → MSR/Gamma/Gaussian 활성화 설정 → 품질 지표
+  → 검출기 D0 / D1 (B detect)
+  → 과제 비교 항목: 에지 수, 특징점 수(SIFT), 후보 수·면적, 처리 시간
+  → 정답이 있으면 hit/miss → precision·recall (evaluate)
+
+출력 (outputs/pipeline/run_<시각>/):
+  results.csv   사진 × 조건 × 검출기 한 줄씩
+  summary.csv   조건 × 검출기 × 그룹 평균, precision·recall은 전체 합산
+  images/       결과 박스 그림 (--save-images N: 처음 N장, 0 = 저장 안 함, -1 = 전부)
+  run_config.json  실행 설정·버전
+
+실행:
+  python src/run_pipeline.py                      # 제공 13장
+  python src/run_pipeline.py --dataset rdd_dev --limit 5 --save-images 5
+"""
+import argparse
+import csv
+import json
+import platform
+import time
+from collections import defaultdict
+from datetime import datetime, timedelta, timezone
+
+import cv2
+import numpy as np
+
+from data import list_images, load_gt
+from adaptive_preprocess import adaptive_preprocess, load_adaptive_config
+from detect import DEFAULT_CFG as DETECT_CFG, detect
+from evaluate import KINDS, evaluate, transform_gt
+from paths import OUTPUT_DIR, imread, imwrite
+from preprocess import CONDITIONS, classify_quality
+from roi import interior_mask
+from visualize import draw_detections
+
+DETECTORS = ("D0", "D1")
+QUALITY_KEYS = ("gray_mean", "block_mean_std_4x4", "laplacian_variance", "noise_sigma", "saturation_ratio")
+CANNY_EDGES = (100, 200)        # 에지 수 = 13장 실측(표1)과 같은 Canny 기준
+
+
+def count_edges(gray, roi_mask=None):
+    edges = cv2.Canny(gray, *CANNY_EDGES) > 0
+    if roi_mask is not None:
+        edges &= interior_mask(roi_mask) != 0
+    return int(edges.sum())
+
+
+def run(dataset="provided", limit=None, conditions=CONDITIONS, detectors=("D1",),
+        keypoints=True, save_images=5, config_path=None):
+    if tuple(conditions) != ("FINAL",):
+        raise ValueError("P0/P1/P1+는 비활성화되었습니다. FINAL만 사용할 수 있습니다.")
+    if limit is not None and limit < 1:
+        raise ValueError("limit은 1 이상이어야 합니다")
+    if not detectors or any(detector not in DETECTORS for detector in detectors):
+        raise ValueError("검출기는 D0 또는 D1이어야 합니다")
+    cfg_a = load_adaptive_config(config_path)
+    name, folder, images = list_images(dataset)
+    images = images[:limit] if limit else images
+    gt_loader = load_gt(dataset, name)
+    sift = cv2.SIFT_create() if keypoints else None
+
+    run_dir = OUTPUT_DIR / "pipeline" / datetime.now(timezone(timedelta(hours=9))).strftime("run_%Y%m%d_%H%M%S_%f")
+    run_dir.mkdir(parents=True, exist_ok=True)
+    rows = []
+    print(f"{name}: {len(images)}장 × 조건 {len(conditions)} × 검출기 {len(detectors)} → {run_dir}", flush=True)
+
+    for i, path in enumerate(images, 1):
+        try:
+            img = imread(path, cv2.IMREAD_COLOR | cv2.IMREAD_IGNORE_ORIENTATION)
+            fixed, meta = adaptive_preprocess(img, cfg_a)
+            geometry, roi_mask = meta["geometry"], meta["roi_mask"]
+            ref_quality = meta["quality_before"]
+            tags = classify_quality(ref_quality)
+        except (ValueError, cv2.error) as exc:
+            print(f"  건너뜀 {path.name}: {exc}", flush=True)
+            continue
+        gt = gt_loader(path)
+        gt_t = transform_gt(gt, geometry, roi_mask) if gt is not None else None
+        for cond in conditions:  # 활성 조건은 FINAL 하나뿐이다.
+            pre_ms = meta["preprocess_ms"]
+            quality = meta["quality_after"]
+            gray = cv2.cvtColor(fixed, cv2.COLOR_BGR2GRAY)
+            n_edges = count_edges(gray, roi_mask)
+            n_kp = len(sift.detect(gray, interior_mask(roi_mask) if roi_mask is not None else None)) if sift else None
+
+            for det_name in detectors:
+                t0 = time.perf_counter()
+                dets = detect(fixed, {"detector": det_name}, roi_mask=roi_mask)
+                det_ms = (time.perf_counter() - t0) * 1000
+                row = {"image": path.name, "dataset": name, "group": ";".join(tags), "condition": cond,
+                       "detector": det_name, "preprocess_ms": round(pre_ms, 2), "detect_ms": round(det_ms, 2),
+                       "n_edges": n_edges, "n_keypoints": n_kp, "has_gt": gt_t is not None}
+                row.update({key: meta[key] for key in ("msr_applied", "msr_alpha", "gamma_applied", "gamma",
+                                                       "gaussian_applied", "gaussian_sigma")})
+                row.update({k: quality[k] for k in QUALITY_KEYS})
+                for kind in KINDS:
+                    ds = [d for d in dets if d["type"] == kind]
+                    row[f"n_{kind}"] = len(ds)
+                    row[f"area_{kind}"] = round(sum(d["area"] for d in ds))
+                if gt_t is not None:
+                    for kind, e in evaluate(dets, gt_t).items():
+                        row.update({f"{kind}_n_gt": e["n_gt"], f"{kind}_hit_gt": e["hit_gt"],
+                                    f"{kind}_correct_det": e["correct_det"]})
+                rows.append(row)
+
+                if save_images < 0 or i <= save_images:
+                    vis = draw_detections(fixed, dets, f"{cond} {det_name}")
+                    for _, x1, y1, x2, y2 in gt_t or []:     # 정답 = 초록
+                        cv2.rectangle(vis, (int(x1), int(y1)), (int(x2), int(y2)), (0, 200, 0), 1)
+                    imwrite(run_dir / "images" / f"{cond.replace('+', '_plus')}_{det_name}" / f"{path.stem}.png", vis)
+
+        if i == 1 or i % 25 == 0 or i == len(images):
+            print(f"  [{i}/{len(images)}] {path.name}", flush=True)
+
+    if not rows:
+        raise ValueError("error:처리된 사진 없음")
+    summary = summarize(rows)
+    write_csv(run_dir / "results.csv", rows)
+    write_csv(run_dir / "summary.csv", summary)
+    (run_dir / "run_config.json").write_text(json.dumps({
+        "dataset": name, "folder": str(folder), "n_images": len(images), "conditions": list(conditions),
+        "detectors": list(detectors), "preprocess_cfg": cfg_a, "detect_cfg": DETECT_CFG,
+        "edges": f"Canny{CANNY_EDGES}", "keypoints": "SIFT" if keypoints else None,
+        "versions": {"python": platform.python_version(), "opencv": cv2.__version__, "numpy": np.__version__},
+    }, ensure_ascii=False, indent=2), encoding="utf-8")
+    print_table(summary)
+    print(f"완료 → {run_dir}")
+    return run_dir
+
+
+def summarize(rows):
+    buckets = defaultdict(list)
+    for r in rows:
+        for g in ("all", *r["group"].split(";")):
+            buckets[(r["condition"], r["detector"], g)].append(r)
+    numeric = ["preprocess_ms", "detect_ms", "n_edges", "n_keypoints", *QUALITY_KEYS,
+               *(f"{p}_{k}" for k in KINDS for p in ("n", "area"))]
+    out = []
+    for (cond, det, group), rs in sorted(buckets.items(), key=lambda kv: (CONDITIONS.index(kv[0][0]), kv[0][1], kv[0][2])):
+        item = {"condition": cond, "detector": det, "group": group, "n_images": len(rs)}
+        for k in numeric:
+            vals = [r[k] for r in rs if r.get(k) is not None]
+            item[f"mean_{k}"] = round(float(np.mean(vals)), 4) if vals else None
+        with_gt = [r for r in rs if r["has_gt"]]
+        for kind in KINDS:
+            n_gt = sum(r[f"{kind}_n_gt"] for r in with_gt)
+            n_det = sum(r[f"n_{kind}"] for r in with_gt)
+            item[f"{kind}_recall"] = round(sum(r[f"{kind}_hit_gt"] for r in with_gt) / n_gt, 4) if n_gt else None
+            item[f"{kind}_precision"] = round(sum(r[f"{kind}_correct_det"] for r in with_gt) / n_det, 4) if n_det else None
+        out.append(item)
+    return out
+
+
+def write_csv(path, rows):
+    cols = list(dict.fromkeys(k for r in rows for k in r))
+    with open(path, "w", encoding="utf-8-sig", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=cols)
+        w.writeheader()
+        w.writerows(rows)
+
+
+def print_table(summary):
+    fmt = lambda v, p=2: "-" if v is None else f"{v:.{p}f}"
+    print(f"\n{'조건':<13}{'검출':<5}{'에지':>8}{'특징점':>8}{'균열후보':>8}{'균열 P':>8}{'균열 R':>8}{'포트홀 R':>9}{'전처리ms':>9}")
+    for s in summary:
+        if s["group"] == "all":
+            print(f"{s['condition']:<13}{s['detector']:<5}{fmt(s['mean_n_edges'], 0):>8}{fmt(s['mean_n_keypoints'], 0):>8}"
+                  f"{fmt(s['mean_n_crack'], 1):>8}{fmt(s['crack_precision']):>8}{fmt(s['crack_recall']):>8}"
+                  f"{fmt(s['pothole_recall']):>9}{fmt(s['mean_preprocess_ms'], 1):>9}")
+
+
+def main():
+    p = argparse.ArgumentParser(description="FINAL 전처리 → 검출 → GT 평가")
+    p.add_argument("--dataset", default="provided", help="provided / captured / rdd / rdd_dev / rdd_test 또는 폴더 경로")
+    p.add_argument("--limit", type=int, help="처음 N장만")
+    p.add_argument("--conditions", nargs="+", default=list(CONDITIONS), choices=CONDITIONS)
+    p.add_argument("--detectors", nargs="+", default=["D1"], choices=DETECTORS)
+    p.add_argument("--config", help="FINAL 설정 JSON (기본: src/final_preprocessing_config.json)")
+    p.add_argument("--no-keypoints", action="store_true", help="SIFT 특징점 수 생략 (빠르게)")
+    p.add_argument("--save-images", type=int, default=5, help="결과 그림 저장 장수 (0 = 안 함, -1 = 전부)")
+    a = p.parse_args()
+    run(a.dataset, a.limit, tuple(a.conditions), tuple(a.detectors), not a.no_keypoints, a.save_images, a.config)
+
+
+if __name__ == "__main__":
+    main()

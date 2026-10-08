@@ -1,0 +1,138 @@
+{
+  "version": 1,
+  "geometry": {
+    "roi": {
+      "type": "trapezoid",
+      "top_y_ratio": 0.6,
+      "top_left_x_ratio": 0.075,
+      "top_right_x_ratio": 0.725,
+      "bottom_left_x_ratio": 0.05,
+      "bottom_right_x_ratio": 0.95,
+      "bottom_y_ratio": 1.0
+    },
+    "roi_overrides": {},
+    "resize": {
+      "long_side": 1024,
+      "allow_upscale": true,
+      "down_interpolation": "area",
+      "up_interpolation": "cubic"
+    },
+    "gamma": {
+      "value": 0.8,
+      "channel": "BGR"
+    },
+    "gaussian": {
+      "kernel": 3,
+      "sigma": 0.8
+    },
+    "clahe": {
+      "clip_limit": 2.0,
+      "tile_grid": [
+        8,
+        8
+      ],
+      "channel": "LAB_L"
+    },
+    "unsharp": {
+      "amount": 0.5,
+      "sigma": 1.0
+    }
+  },
+  "msr": {
+    "enabled": false,
+    "alpha": 0.25,
+    "parameters": {
+      "enabled": true,
+      "scales": [
+        15.0,
+        60.0,
+        180.0
+      ],
+      "weights": [
+        0.3333333333333333,
+        0.3333333333333333,
+        0.3333333333333333
+      ],
+      "epsilon": 1.0,
+      "channel": "LAB_L",
+      "output_percentiles": [
+        1.0,
+        99.0
+      ],
+      "min_log_range": 0.0001,
+      "blur_mode": "pyramid",
+      "max_blur_sigma": 12.0
+    }
+  },
+  "gamma": {
+    "enabled": false,
+    "low": 84.912873175538,
+    "high": 148.94870504550732,
+    "dark_value": 1.0,
+    "bright_value": 1.1,
+    "metric": "gray_mean",
+    "target_source": "B1 tuning good group",
+    "cells": [
+      {
+        "cell": "dark",
+        "n_images": 128,
+        "n_gt": 178,
+        "selected_condition": "G1",
+        "minimum_images": 20,
+        "minimum_gt": 10
+      },
+      {
+        "cell": "bright",
+        "n_images": 37,
+        "n_gt": 89,
+        "selected_condition": "G1.1",
+        "minimum_images": 20,
+        "minimum_gt": 10
+      }
+    ],
+    "validation_gate": {
+      "proposed_macro_f1": 0.12000064681658437,
+      "reference_macro_f1": 0.12075097179720454,
+      "difference": -0.0007503249806201651,
+      "reason": "no_validation_gain"
+    },
+    "tuning_macro_f1_difference": 0.000578215431124629,
+    "disable_reason": "no_strict_gain_on_both_tuning_and_validation"
+  },
+  "gaussian": {
+    "enabled": false,
+    "low": 1.5210089925022745,
+    "high": 1.8914386944292545,
+    "moderate_sigma": 0.4,
+    "high_sigma": 0.8,
+    "kernel": 3,
+    "metric": "noise_sigma",
+    "target_source": "B1 tuning good group",
+    "cells": [
+      {
+        "cell": "moderate",
+        "n_images": 23,
+        "n_gt": 50,
+        "selected_condition": "S0.4",
+        "minimum_images": 20,
+        "minimum_gt": 10
+      },
+      {
+        "cell": "high",
+        "n_images": 68,
+        "n_gt": 68,
+        "selected_condition": "S0.8",
+        "minimum_images": 20,
+        "minimum_gt": 10
+      }
+    ],
+    "validation_gate": {
+      "proposed_macro_f1": 0.11990610770429154,
+      "reference_macro_f1": 0.12075097179720454,
+      "difference": -0.0008448640929129975,
+      "reason": "no_validation_gain"
+    },
+    "tuning_macro_f1_difference": 0.002067908348203723,
+    "disable_reason": "no_strict_gain_on_both_tuning_and_validation"
+  }
+}
