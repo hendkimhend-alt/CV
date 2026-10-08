@@ -101,7 +101,7 @@ DEFAULT_CFG = {
     # 차선 · 경계(426)라 균열 표가 0에 가까워짐 → 우리 강한 기준 32.5가 M = 0.5가 되게: β = 32.5 / √(2 ln 2) = 27.6
     "tensor_beta": 27.6,
     "tensor_gate": False,
-    # 가이드 필터 (Chen et al. 2021 §2): 찾기 입력에만. None = 끔 · {"r": 반지름, "eps": "std" | "var" | 숫자}
+    # 가이드 필터 (Chen et al. 2021 §2): 찾기 입력에만. None = 끔 · {"r": 반지름, "eps": "std" | "var" | 숫자, "eps_scale": 배수}
     "guided_filter": None,
     # 중심선 NMS: False = 4방향으로 묶어서 (지금) · True = 연속 방향 보간 (논문 §5.1)
     "nms_interp": False,   # True: 찾기 점수 = 선 점수 × 전파 세기, 중심선은 원래 방향 (논문 §5.1 "곡선 띠 안의 중심")
@@ -429,6 +429,7 @@ def find_input(gray, cfg):
     g = gray.astype(np.float32)
     eps = gf.get("eps", "std")
     eps = float(g.std()) if eps == "std" else float(g.var()) if eps == "var" else float(eps)
+    eps *= float(gf.get("eps_scale", 1.0))
     return cv2.ximgproc.guidedFilter(g, g, int(gf.get("r", 4)), eps)
 
 
