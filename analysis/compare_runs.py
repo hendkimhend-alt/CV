@@ -14,6 +14,7 @@ Precision = 정답 박스 안 후보 ÷ 전체 후보 (evaluate.prf_in50, 10/10 
   실행 안에 조건 × 검출기가 여러 개면 --pick 조건/검출기 로 고른다 (예: --pick none/D1hv)
   --split: 개발 세트를 튜닝 394 · 검증 169로 나눠서 (labels/split_rdd_dev.csv) — 여러 값 중 고를 때 튜닝에서 고르고
            검증에서 확인 (10/8 실험과 같은 계산: 2000번 · seed 20261008)
+  --split-groups: --split에 더해 튜닝 · 검증 안의 품질 그룹(흐림 · 그림자)도 — 그룹만 노리는 보정용
 """
 import argparse
 import csv
@@ -58,9 +59,11 @@ def main():
     p.add_argument("--kind", default="crack", choices=("crack", "pothole"))
     p.add_argument("--pick", help="조건/검출기 (실행 안에 여러 개일 때)")
     p.add_argument("--split", action="store_true", help="그룹 대신 튜닝 · 검증으로 나눠 비교 (개발 세트 실행만)")
+    p.add_argument("--split-groups", action="store_true", help="--split + 튜닝 · 검증 안의 흐림 · 그림자 그룹")
     p.add_argument("--n-boot", type=int, help="부트스트랩 횟수 (기본 1000, --split이면 2000)")
     p.add_argument("--seed", type=int, help="기본 20261006, --split이면 20261008")
     a = p.parse_args()
+    a.split = a.split or a.split_groups
     n_boot = a.n_boot or (2000 if a.split else 1000)
     seed = a.seed or (20261008 if a.split else 20261006)
     if len(a.runs) < 2:
@@ -76,8 +79,9 @@ def main():
         missing = [im for im in imgs if im not in part]
         if missing:
             raise SystemExit(f"error:--split은 rdd_dev 실행만 — 분할에 없는 사진 {len(missing)}장 (예: {missing[0]})")
-        tags = {im: [part[im]] for im in imgs}
-        groups = ("tune", "val")
+        tags = {im: [part[im]] + [f"{part[im]}:{g}" for g in row_tags(base[im])[1:]] for im in imgs}
+        groups = ("tune", "val") + (("tune:blur", "val:blur", "tune:local_illumination", "val:local_illumination")
+                                    if a.split_groups else ())
     else:
         tags = {im: row_tags(base[im]) for im in imgs}
         groups = GROUPS
