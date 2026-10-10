@@ -55,6 +55,17 @@ DEFAULT_CFG = {
     "crack_min_contrast": 0.0,   # 덩어리 평균 Black-hat / 강한 기준 ≥ 이 값 → crack (0 = 끔)
     "pothole_min_area_ratio": 0.002,
     "pothole_max_elong": 3.0,    # 세장비 < 이 값 + 면적 충분 → pothole
+    # 포트홀 2단계 (src/pothole.py) — "texture"로 켤 때만. 기본 "adaptive" = 1차 방식(적응형 임계값) 그대로
+    "pothole_method": "adaptive",
+    "pothole_tex_k": 21,         # [후보] 거칠기(기울기 세기)를 평균할 창 (px, 긴 변 1024 기준)
+    "pothole_tex_z": 2.5,        # [후보] 같은 높이 노면 대비 거칠기 z가 이보다 크면 후보
+    "pothole_min_frac": 0.0006,  # [후보] 면적 하한 (사진 면적 대비)
+    "pothole_max_frac": 0.08,    # [후보] 면적 상한
+    "pothole_chroma_max": 1.0,   # [검증 ①] 상자 안 · 주변 색도 차 ≤ 이 값 (색이 다른 물체 제거)
+    "pothole_darkp10_min": 0.0,  # [검증 ②] 상자 안 어두운 10%가 주변보다 어둡거나 같음
+    "pothole_aspect_max": 3.0,   # [검증 ③] 상자 세장비 ≤ 이 값 (긴 균열 · 차선 제거)
+    "pothole_min_rel_y": 0.0,    # [검증 ④] 상자 중심 높이(사진 높이 대비) ≥ 이 값 (0 = 끔, 최종 0.4)
+    "pothole_road_color_max": None,  # [검증 ⑤] 주변이 도로 표본과 다른 색 정도(roadcue) ≤ 이 값 (None = 끔, 최종 2.0)
     "drop_border": "t",          # 이 변에 닿는 후보 버림: "t"(위) "b"(아래) "l"(왼) "r"(오른) 조합.
                                  # 위(ROI 경계 = 원경 차량·인도)만 — 아래까지 버리면 화면 밖으로 뻗은 균열을 놓침
     "border_margin": 2,
@@ -117,7 +128,9 @@ def detect(img, cfg=None):
         branches = [("any", _d0_mask(gray, cfg), None, None)]
     elif cfg["detector"] == "D1":
         mask, bh, hi = _crack_mask(gray, cfg)
-        branches = [("crack", mask, bh, hi), ("pothole", _pothole_mask(gray, cfg), None, None)]
+        branches = [("crack", mask, bh, hi)]
+        if cfg["pothole_method"] == "adaptive":
+            branches.append(("pothole", _pothole_mask(gray, cfg), None, None))
     else:
         raise ValueError(f"unknown detector: {cfg['detector']}")
 
@@ -163,6 +176,12 @@ def detect(img, cfg=None):
                         break
             if det["type"] != "noise" or cfg["keep_noise"]:
                 detections.append(det)
+    if cfg["detector"] == "D1" and cfg["pothole_method"] == "texture":
+        if __package__:
+            from .pothole import texture_potholes
+        else:
+            from pothole import texture_potholes
+        detections.extend(texture_potholes(img, cfg, cfg["keep_noise"]))
     return detections
 
 

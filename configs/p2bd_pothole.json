@@ -1,0 +1,30 @@
+{
+  "description": "p2bd + 포트홀 2단계 (10/10) — 후보: 같은 높이 노면 대비 거칠기 z > 2.5 (k 21) · 검증: 색도 차 ≤ 1.0 · 어두운 10% ≥ 0 · 세장비 ≤ 3 · 노면 단서 색 ≤ 2.0 · 높이 ≥ 0.4. 균열은 p2bd와 동일",
+  "roi": "auto",
+  "conditions": [
+    "none"
+  ],
+  "detectors": [
+    "D1hv"
+  ],
+  "valley_ratio": 0.35,
+  "line_hi_abs": 128.609375,
+  "set": {
+    "line_thicken": 1,
+    "crack_min_length": 45,
+    "line_lo_ratio": 0.2,
+    "line_scale_combine": "mean",
+    "tensor_propagate": 3,
+    "tensor_beta": 27.6,
+    "tensor_gate": true,
+    "cue_filter": {
+      "energy": 1.6082,
+      "coherence": 0.2941,
+      "color": 2.9964,
+      "depth_min": 0.2666
+    },
+    "pothole_method": "texture",
+    "pothole_road_color_max": 2.0,
+    "pothole_min_rel_y": 0.4
+  }
+}
