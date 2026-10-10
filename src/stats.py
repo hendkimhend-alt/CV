@@ -1,7 +1,8 @@
 """
 F1 오차 범위 — 사진 단위 부트스트랩 (짝지은 비교).
 
-- 같은 그룹의 사진들을 복원 추출(B번) → 뽑힌 사진들의 TP·FP·FN 합으로 F1을 다시 계산 → 2.5 · 97.5 백분위 = 95% 범위
+- 같은 그룹의 사진들을 복원 추출(B번) → 뽑힌 사진들의 TP·FP·FN(·후보 수) 합으로 F1을 다시 계산 → 2.5 · 97.5 백분위 = 95% 범위
+  (in50은 보고용 F1 — evaluate.prf_in50, 10/10 고정)
 - 짝지은 비교: 한 번 뽑은 사진 묶음을 모든 조건(전처리 × 검출기)에 똑같이 쓴다
   → "기준 조건 대비 F1 차이"의 95% 범위가 0을 포함하지 않으면 의미 있는 차이(significant)
 - 판정 기준 고르기 규칙("조건 간 차이를 오차 범위보다 크게 구분하는 기준 중 가장 엄격한 것")에 쓰는 숫자도 여기서 나온다
@@ -10,7 +11,7 @@ from collections import defaultdict
 
 import numpy as np
 
-from evaluate import CRITERIA, KINDS
+from evaluate import CRITERIA, KINDS, prf_in50
 
 SEED = 20261006
 
@@ -23,7 +24,7 @@ def row_tags(r):
     return tags
 
 
-def _f1(tp, fp, fn):
+def _f1(tp, fp, fn, n_det=None):
     with np.errstate(divide="ignore", invalid="ignore"):
         return np.where(2 * tp + fp + fn > 0, 2 * tp / (2 * tp + fp + fn), np.nan)
 
@@ -49,10 +50,11 @@ def bootstrap(rows, reference, n_boot=1000):
             for c in CRITERIA:
                 boot, point = {}, {}
                 for cfg in configs:
-                    cnt = np.array([[table[(im, *cfg)][f"{kind}_{c}_{k}"] for k in ("tp", "fp", "fn")]
-                                    for im in imgs], dtype=float)
-                    point[cfg] = float(_f1(*cnt.sum(0)))
-                    boot[cfg] = _f1(*(cnt[idx].sum(1).T))
+                    cols = [f"{kind}_{c}_{k}" for k in ("tp", "fp", "fn")] + [f"n_{kind}"]
+                    cnt = np.array([[table[(im, *cfg)][k] for k in cols] for im in imgs], dtype=float)
+                    f1 = (lambda *a: prf_in50(*a)[2]) if c == "in50" else _f1
+                    point[cfg] = float(f1(*cnt.sum(0)))
+                    boot[cfg] = f1(*(cnt[idx].sum(1).T))
                     if np.isfinite(boot[cfg]).any():
                         ci[(*cfg, group, kind, c)] = tuple(float(v) for v in np.nanpercentile(boot[cfg], [2.5, 97.5]))
                 if reference not in boot:

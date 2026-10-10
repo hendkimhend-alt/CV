@@ -48,7 +48,7 @@ import numpy as np
 
 from data import list_images, load_gt, load_viewpoints
 from detect import DEFAULT_CFG as DETECT_CFG, detect
-from evaluate import CRITERIA, KINDS, count_cut, evaluate, prf, separation, transform_gt
+from evaluate import CRITERIA, KINDS, count_cut, evaluate, prf, prf_in50, separation, transform_gt
 from metrics import measure_quality
 from paths import OUTPUT_DIR, imread, imwrite
 from stats import bootstrap, row_tags
@@ -142,10 +142,29 @@ def git_version():
         return ""
 
 
+def run_log_metrics(rs):
+    """runs.csv 한 줄의 숫자들 (rs = 한 조건 × 검출기의 정답 있는 사진 행, 값은 숫자).
+    Recall = 맞힌 정답 ÷ 정답 수(ROI 밖으로 잘린 정답 포함) · Precision = 정답 박스 안 후보 ÷ 전체 후보 (prf_in50, 10/10 고정)
+    · 사진당 가짜 = 가짜 ÷ 정답이 있는 사진 수 · 조각/맞힘 = 정답 박스 안 후보 ÷ 맞힌 정답
+    · precision_hit = 10/10 전 계산 (맞힌 정답 ÷ (맞힌 정답 + 가짜)) — 1차 목표(P 0.10)와 잇기 위해 기록만"""
+    out = {}
+    for kind in KINDS:
+        tp, fp, fn = (sum(r[f"{kind}_in50_{k}"] for r in rs) for k in ("tp", "fp", "fn"))
+        n = sum(r[f"n_{kind}"] for r in rs)
+        p, r_, f1 = prf_in50(tp, fp, fn, n)
+        p_hit = prf(tp, fp, fn)[0]
+        rnd = lambda v, k=4: None if v is None else round(v, k)
+        out.update({f"{kind}_gt": sum(r[f"{kind}_n_gt"] for r in rs), f"{kind}_hit": tp, f"{kind}_fake": fp,
+                    f"{kind}_cands": n,
+                    f"{kind}_recall": rnd(r_), f"{kind}_precision": rnd(p), f"{kind}_f1": rnd(f1),
+                    f"{kind}_fake_per_img": round(fp / len(rs), 2),
+                    f"{kind}_frag_per_hit": round((n - fp) / tp, 2) if tp else None,
+                    f"{kind}_precision_hit": rnd(p_hit)})
+    return out
+
+
 def log_run(run_dir, rows, dataset, limit, config_name, note):
-    """results/runs.csv에 이 실행을 덧붙인다 — 조건 × 검출기마다 한 줄, 판정 기준 in50, 전체 사진 기준.
-    Recall = 맞힌 정답 ÷ 정답 수(ROI 밖으로 잘린 정답 포함) · Precision = 맞힌 후보 ÷ (맞힌 후보 + 가짜)
-    · 사진당 가짜 = 가짜 ÷ 정답이 있는 사진 수 (summary.csv의 in50 값과 같은 계산)."""
+    """results/runs.csv에 이 실행을 덧붙인다 — 조건 × 검출기마다 한 줄, 판정 기준 in50, 전체 사진 기준 (계산은 run_log_metrics)."""
     with_gt = [r for r in rows if r["has_gt"]]
     if not with_gt:
         return
@@ -155,14 +174,7 @@ def log_run(run_dir, rows, dataset, limit, config_name, note):
         rs = [r for r in with_gt if r["condition"] == cond and r["detector"] == det]
         row = {"when": when, "run": run_dir.name, "config": config_name or "", "dataset": dataset,
                "n_images": len(rs), "limit": limit or "", "condition": cond, "detector": det}
-        for kind in KINDS:
-            tp, fp, fn = (sum(r[f"{kind}_in50_{k}"] for r in rs) for k in ("tp", "fp", "fn"))
-            p, r_, f1 = prf(tp, fp, fn)
-            row.update({f"{kind}_gt": sum(r[f"{kind}_n_gt"] for r in rs), f"{kind}_hit": tp, f"{kind}_fake": fp,
-                        f"{kind}_recall": None if r_ is None else round(r_, 4),
-                        f"{kind}_precision": None if p is None else round(p, 4),
-                        f"{kind}_f1": None if f1 is None else round(f1, 4),
-                        f"{kind}_fake_per_img": round(fp / len(rs), 2)})
+        row.update(run_log_metrics(rs))
         row.update({"code": git_version(), "note": note or ""})
         out.append(row)
     new = not RUN_LOG.exists()
@@ -316,10 +328,15 @@ def summarize(rows):
             n_cut = sum(r[f"{kind}_n_cut"] for r in with_gt)
             item[f"{kind}_n_gt"], item[f"{kind}_n_cut"] = n_gt, n_cut      # 정답 수 / 그중 ROI 밖으로 잘린 수
             item[f"{kind}_cut_ratio"] = round(n_cut / n_gt, 4) if n_gt else None
+            n_det = sum(r[f"n_{kind}"] for r in with_gt)
             for c in CRITERIA:
                 tp, fp, fn = (sum(r[f"{kind}_{c}_{k}"] for r in with_gt) for k in ("tp", "fp", "fn"))
-                for name, v in zip(("precision", "recall", "f1"), prf(tp, fp, fn)):
+                vals = prf_in50(tp, fp, fn, n_det) if c == "in50" else prf(tp, fp, fn)   # in50 = 보고용 (10/10 고정)
+                for name, v in zip(("precision", "recall", "f1"), vals):
                     item[f"{kind}_{c}_{name}"] = None if v is None else round(v, 4)
+                if c == "in50":
+                    p_hit = prf(tp, fp, fn)[0]
+                    item[f"{kind}_in50_precision_hit"] = None if p_hit is None else round(p_hit, 4)
                 item[f"{kind}_{c}_fppi"] = round(fp / len(with_gt), 4) if with_gt else None
             item[f"{kind}_clean_fppi"] = round(sum(r[f"n_{kind}"] for r in clean) / len(clean), 4) if clean else None
             n = sum(r[f"{kind}_sep_n"] for r in with_gt)

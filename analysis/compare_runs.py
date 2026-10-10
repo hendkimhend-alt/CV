@@ -3,6 +3,7 @@
 
 같은 데이터 세트를 돌린 실행끼리만 비교한다 (사진 이름으로 짝지음). 첫 번째 실행이 기준.
 판정 기준은 in50 (src/evaluate.py) — run_pipeline.py의 summary.csv · results/runs.csv와 같은 계산.
+Precision = 정답 박스 안 후보 ÷ 전체 후보 (evaluate.prf_in50, 10/10 고정), Recall = 맞힌 정답 ÷ 정답 수.
 사진을 다시 뽑아(복원 추출, 1000번) 두 실행의 차이를 매번 다시 재고, 그 차이의 가운데 95%가
 0을 포함하지 않으면 ✱ (= 우연으로 보기 어려운 차이).
 
@@ -24,6 +25,7 @@ import numpy as np
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 from paths import OUTPUT_DIR  # noqa: E402
+from evaluate import prf_in50  # noqa: E402
 from stats import row_tags  # noqa: E402
 
 GROUPS = ("all", "blur", "local_illumination", "normal")
@@ -45,9 +47,9 @@ def load(arg, pick):
 
 
 def stat(c):
-    tp, fp, fn = c[..., 0], c[..., 1], c[..., 2]
-    with np.errstate(invalid="ignore", divide="ignore"):
-        return tp / (tp + fn), tp / (tp + fp), 2 * tp / (2 * tp + fp + fn)
+    """c[..., (tp, fp, fn, 후보 수)] → (Recall, Precision, F1)"""
+    p, r, f1 = prf_in50(c[..., 0], c[..., 1], c[..., 2], c[..., 3])
+    return r, p, f1
 
 
 def main():
@@ -90,14 +92,15 @@ def main():
         if a.split:                                 # 묶음마다 새로 (10/8 튜닝 · 검증 비교와 같은 계산)
             rng = np.random.default_rng(seed)
         idx = rng.integers(0, len(gi), size=(n_boot, len(gi)))
-        cnt = {n: np.array([[float(d[im][f"{k}_in50_{x}"]) for x in ("tp", "fp", "fn")] for im in gi]) for n, d in runs}
+        cols = [f"{k}_in50_{x}" for x in ("tp", "fp", "fn")] + [f"n_{k}"]
+        cnt = {n: np.array([[float(d[im][c]) for c in cols] for im in gi]) for n, d in runs}
         bb = stat(cnt[base_name][idx].sum(1))
         b0 = stat(cnt[base_name].sum(0))
         print(f"\n[{group} · 사진 {len(gi)}장]")
         for n, _ in runs:
             R, P, F = stat(cnt[n].sum(0))
             line = (f"  {n:24} R {R:.3f}  P {P:.3f}  F1 {F:.3f}  맞힘 {cnt[n][:, 0].sum():4.0f}"
-                    f"  가짜/장 {cnt[n][:, 1].sum() / len(gi):5.1f}")
+                    f"  후보/장 {cnt[n][:, 3].sum() / len(gi):5.1f}  가짜/장 {cnt[n][:, 1].sum() / len(gi):5.1f}")
             if n != base_name:
                 b = stat(cnt[n][idx].sum(1))
                 for lab, j, pt in (("R", 0, R), ("P", 1, P)):
