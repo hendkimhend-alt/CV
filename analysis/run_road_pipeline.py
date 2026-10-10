@@ -13,7 +13,11 @@ B 위에 얹는 보정 (--extra, 기본 없음 = B 그대로):
   {"line_close": {"length": 11, "angles": 12}}              막대 닫힘: 여러 방향 막대로 닫힌 결과의 최솟값
                                                              → 막대보다 짧은 어두운 점 · 줄(골재)은 메우고, 긴 어두운 선(균열)은 남김
   {"unsharp": {"amount": 1.5, "sigma": 1.0, "apply_to": "blur"}}   언샤프 (apply_to: all · blur — 흐림 = labels/split_rdd.csv 그룹, 사진만으로 정한 분류)
-  여러 개를 함께 쓰면 "order"의 순서로 (기본 가우시안 → 막대 닫힘 → 언샤프), 예: {"line_close": …, "gaussian": …, "order": ["line_close", "gaussian"]}
+  {"clahe": {"clip": 2.0, "tile": 8, "apply_to": "all"}}     CLAHE (Lab L 채널, apply_to: all · local_illumination 등 그룹)
+  {"gamma": {"mode": "auto", "min": 0.5, "max": 2.0}}        사진마다 감마: 노면 회색 가운데값 m이 128이 되는 γ = ln 0.5 ÷ ln(m/255)
+                                                             (auto_dark = γ ≤ 1만, 어두운 사진만 밝게 · fixed = "value")
+  여러 개를 함께 쓰면 "order"의 순서로 (기본 감마 → CLAHE → 가우시안 → 막대 닫힘 → 언샤프),
+  예: {"line_close": …, "gaussian": …, "order": ["line_close", "gaussian"]} · 모든 단계에 "apply_to" 가능 (기본 all)
   보정은 Hessian 점수 크기를 바꾸므로 --calibrate로 강한 기준을 다시 맞춘다:
   B 그대로일 때 강한 흔적(중심선 ≥ 128.609375) 총수와 같아지는 값 (사진만 씀, 정답 안 봄 — analysis/calibrate.py와 같은 원리)
 
@@ -107,19 +111,32 @@ def prepare(path, pre_cfg, det, cache):
 def apply_extra(img, mask, extra, tags):
     """B 위에 얹는 보정 — 검출기 입력에서 노면 마스크 안에만, extra["order"] 순서로. → (영상, 적용했나)"""
     out, applied = img, False
-    for step in extra.get("order", ("gaussian", "line_close", "unsharp")):
+    for step in extra.get("order", ("gamma", "clahe", "gaussian", "line_close", "unsharp")):
         if step not in extra:
             continue
         c = extra[step]
-        if step == "gaussian":
+        if c.get("apply_to", "all") != "all" and c["apply_to"] not in tags:
+            continue
+        if step == "gamma":
+            if c["mode"] == "fixed":
+                g = float(c["value"])
+            else:
+                gray = cv2.cvtColor(out, cv2.COLOR_BGR2GRAY)
+                m = float(np.clip(np.median(gray[mask > 0]) if np.any(mask > 0) else np.median(gray), 1, 254))
+                g = float(np.clip(np.log(0.5) / np.log(m / 255.0), c.get("min", 0.5), c.get("max", 2.0)))
+                g = min(g, 1.0) if c["mode"] == "auto_dark" else g
+            out = cv2.LUT(out, np.rint(255.0 * (np.arange(256) / 255.0) ** g).astype(np.uint8))
+        elif step == "clahe":
+            lab = cv2.cvtColor(out, cv2.COLOR_BGR2LAB)
+            lab[:, :, 0] = cv2.createCLAHE(clipLimit=c["clip"], tileGridSize=(c.get("tile", 8),) * 2).apply(lab[:, :, 0])
+            out = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
+        elif step == "gaussian":
             out = cv2.GaussianBlur(out, (c["ksize"], c["ksize"]), c["sigma"], borderType=cv2.BORDER_REFLECT_101)
         elif step == "line_close":
             closed = [cv2.morphologyEx(out, cv2.MORPH_CLOSE, _line_kernel(c["length"], 180.0 * i / c["angles"]),
                                        borderType=cv2.BORDER_REPLICATE) for i in range(c["angles"])]
             out = np.min(np.stack(closed), axis=0)
         elif step == "unsharp":
-            if c.get("apply_to", "all") != "all" and c["apply_to"] not in tags:
-                continue
             src = out.astype(np.float32)
             blur = cv2.GaussianBlur(src, (0, 0), c["sigma"], borderType=cv2.BORDER_REFLECT_101)
             out = np.rint(np.clip(src + c["amount"] * (src - blur), 0, 255)).astype(np.uint8)
