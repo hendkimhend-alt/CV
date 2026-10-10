@@ -13,6 +13,7 @@ B 위에 얹는 보정 (--extra, 기본 없음 = B 그대로):
   {"line_close": {"length": 11, "angles": 12}}              막대 닫힘: 여러 방향 막대로 닫힌 결과의 최솟값
                                                              → 막대보다 짧은 어두운 점 · 줄(골재)은 메우고, 긴 어두운 선(균열)은 남김
   {"unsharp": {"amount": 1.5, "sigma": 1.0, "apply_to": "blur"}}   언샤프 (apply_to: all · blur — 흐림 = labels/split_rdd.csv 그룹, 사진만으로 정한 분류)
+  여러 개를 함께 쓰면 "order"의 순서로 (기본 가우시안 → 막대 닫힘 → 언샤프), 예: {"line_close": …, "gaussian": …, "order": ["line_close", "gaussian"]}
   보정은 Hessian 점수 크기를 바꾸므로 --calibrate로 강한 기준을 다시 맞춘다:
   B 그대로일 때 강한 흔적(중심선 ≥ 128.609375) 총수와 같아지는 값 (사진만 씀, 정답 안 봄 — analysis/calibrate.py와 같은 원리)
 
@@ -104,24 +105,26 @@ def prepare(path, pre_cfg, det, cache):
 
 
 def apply_extra(img, mask, extra, tags):
-    """B 위에 얹는 보정 — 검출기 입력에서 노면 마스크 안에만. → (영상, 적용했나)"""
+    """B 위에 얹는 보정 — 검출기 입력에서 노면 마스크 안에만, extra["order"] 순서로. → (영상, 적용했나)"""
     out, applied = img, False
-    if "gaussian" in extra:
-        g = extra["gaussian"]
-        out = cv2.GaussianBlur(out, (g["ksize"], g["ksize"]), g["sigma"], borderType=cv2.BORDER_REFLECT_101)
-        applied = True
-    if "line_close" in extra:
-        lc = extra["line_close"]
-        closed = [cv2.morphologyEx(out, cv2.MORPH_CLOSE, _line_kernel(lc["length"], 180.0 * i / lc["angles"]),
-                                   borderType=cv2.BORDER_REPLICATE) for i in range(lc["angles"])]
-        out = np.min(np.stack(closed), axis=0)
-        applied = True
-    if "unsharp" in extra and (extra["unsharp"].get("apply_to", "all") == "all"
-                               or extra["unsharp"]["apply_to"] in tags):
-        u = extra["unsharp"]
-        src = out.astype(np.float32)
-        blur = cv2.GaussianBlur(src, (0, 0), u["sigma"], borderType=cv2.BORDER_REFLECT_101)
-        out = np.rint(np.clip(src + u["amount"] * (src - blur), 0, 255)).astype(np.uint8)
+    for step in extra.get("order", ("gaussian", "line_close", "unsharp")):
+        if step not in extra:
+            continue
+        c = extra[step]
+        if step == "gaussian":
+            out = cv2.GaussianBlur(out, (c["ksize"], c["ksize"]), c["sigma"], borderType=cv2.BORDER_REFLECT_101)
+        elif step == "line_close":
+            closed = [cv2.morphologyEx(out, cv2.MORPH_CLOSE, _line_kernel(c["length"], 180.0 * i / c["angles"]),
+                                       borderType=cv2.BORDER_REPLICATE) for i in range(c["angles"])]
+            out = np.min(np.stack(closed), axis=0)
+        elif step == "unsharp":
+            if c.get("apply_to", "all") != "all" and c["apply_to"] not in tags:
+                continue
+            src = out.astype(np.float32)
+            blur = cv2.GaussianBlur(src, (0, 0), c["sigma"], borderType=cv2.BORDER_REFLECT_101)
+            out = np.rint(np.clip(src + c["amount"] * (src - blur), 0, 255)).astype(np.uint8)
+        else:
+            raise SystemExit(f"error:모르는 보정 {step}")
         applied = True
     if not applied:
         return img, False
