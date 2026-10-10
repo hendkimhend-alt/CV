@@ -1,422 +1,502 @@
-> **이 저장소에는 두 버전이 함께 있습니다** (main 머지 2026-10-08, 두 README를 모두 그대로 남김)
-> - **`CV-main/`** — FINAL 버전 (고정 사다리꼴 ROI + FINAL 전처리 + D1 검출기). 설명은 바로 아래 첫 번째 README이며, 그 안의 경로(`src/...`)는 **`CV-main/` 기준**입니다.
-> - **맨 위 `src/`** — sj/dev 버전 (ROI auto · 보정 단계 켜고 끄기 · 조명 펴기 · 새 검출기). 설명은 아래 두 번째 README입니다.
-> - 📏 **성능을 재고 비교하는 팀 공통 방법 → [`EVALUATION.md`](EVALUATION.md)** (무엇을 바꾸든 이 방법으로 재고, 결과는 `results/`에 남김)
-> - `CV-main/` 버전의 명령(`py src/run_final.py` 등)은 **`CV-main/` 폴더 안에서** 실행해야 합니다. 저장소 맨 위에서 치면 맨 위 `src/`가 실행됩니다.
+# 전처리 파트 (`src/preprocessing/`)
+
+도로 영상에서 **도로 영역(road_mask)을 자동으로 찾고 검증한 뒤, 도로 안에서만 밝기를 보정**해 검출기에 넘긴다.
+고전 영상처리만 쓴다 (AI · 딥러닝 없음). 설정 v1.1 (`configs/preprocessing.json`, `preproc-v1.1-provisional`).
+
+- 모든 수치는 `configs/preprocessing.json` 값이다. 대부분 **잠정값**이며, 최적값이라는 근거는 없다.
+- 길이(px) 단위는 별도 표시가 없으면 **작업 해상도(긴 변 1024)** 기준이다.
+- 성능 수치는 2026-10-10 RDD2020 dev(563장)에서 잰 값이다. rdd_test(241장)로는 재지 않았다.
+
+문서 순서: **1. 전체 흐름 → 2. 입력 → 3. 처리 → 4. 출력 → 5. 성능 → 6. 파일별 기능 · 실행 순서**
 
 ---
 
-# CV — 도로 균열·포트홀 후보 검출
-
-고정 사다리꼴 ROI 안의 도로 이미지에서 균열·포트홀 후보를 검출하고 이미지와 CSV로 저장한다.
-모든 실행 파일의 전처리는 **FINAL 설정**을 사용한다. 기본 검출기는 D1이다.
-
-## 1. 현재 처리 흐름
+## 1. 전체 흐름
 
 ```text
-입력 이미지(BGR)
-    → 사다리꼴 ROI 마스크 생성
-    → ROI 외접 영역 자르기·긴 변 1024 리사이즈
-    → 선택적 MSR
-    → ROI 내부 품질 측정
-    → 선택적 Gamma
-    → 선택적 Gaussian
-    → 최종 품질 측정
-    → D1 균열·포트홀 후보 검출
-    → 검출 이미지·CSV·실행 설정 저장
+[입력]  ─────────────────────────────────────────────────────────────────────────────
+ A. 실행 인자 해석          --input / --dataset · --images · --limit · --set · --manual-mask(-dir) · --edit-failed
+ B. 설정 읽기 · 검사        configs/preprocessing.json + --set 덮어쓰기 → 기본 값 검사
+ C. 입력 목록 만들기        파일 · 폴더 · 데이터셋 → rdd_test 보호 → 이름 거르기 → 개수 제한 → image_id 부여
+ D. 결과 폴더 만들기        outputs/preprocessing/run_<시각>/ + run_config.json 기록
+ ── 사진마다 반복 ──
+ E. 영상 읽기 · 형식 검사   BGR uint8 H×W×3 (실패하면 그 사진만 error로 기록하고 다음 사진)
+ F. 수동 마스크 찾기        있으면 읽고 검사 (못 쓰면 경고 후 자동 마스크로 진행)
+
+[처리]  process_image() ──────────────────────────────────────────────────────────────
+ ① 작업 영상 (긴 변 1024)  ② 특징 지도  ③ 격자 특징  ④ 시드 고르기  ⑤ Region Growing
+ ⑥ 마스크 정리  ⑦ 원본 크기 복원  ⑧ 검증 PASS/FAIL → 최종 road_mask 결정 (수동 · 편집기 · 자동)
+ ⑨ analysis_mask  ⑩ 초기 품질  ⑪ 조건부 Gamma  ⑫ 노이즈 재측정  ⑬ 조건부 Gaussian(꺼 둠)
+ ⑭ 최종 품질  ⑮ 출력 규약 검사
+
+[출력]  ──────────────────────────────────────────────────────────────────────────────
+ G. 사진별 저장             images/<image_id>/ processed_image · road_mask · analysis_mask · metadata · overlay
+ H. 실행 단위 저장          summary.csv · run_summary.json · review_sheet.jpg · 화면 로그
+ I. (검출 실행 시)          detector_adapter → 도로 영역 자르기 · 긴 변 1024 → detect() → 원본 좌표 · 도로 위 판정
 ```
 
-현재 설정의 `msr.enabled`, `gamma.enabled`, `gaussian.enabled`는 모두 `false`다.
-따라서 기본 실행은 **사다리꼴 ROI·리사이즈·품질 측정 후 검출**하며, 이 세 보정은 적용하지 않는다.
-보정이 생략되면 동일한 영상의 품질 측정값을 재사용한다.
+---
 
-기존 P0/P1/P1+ 설정과 실행 로직은 주석으로 보존했다. 실행 옵션으로는 FINAL만 허용한다.
-MSR·Gamma·Gaussian·CLAHE·Unsharp 연산 함수는 남아 있으며, CLAHE·Unsharp는 현재 FINAL 흐름에 연결하지 않는다.
-검출 로직과 검출 파라미터는 FINAL 통합 과정에서 변경하지 않았다.
+## 2. 입력
 
-## 2. 파일별 역할
+### A. 실행 인자 (`run_preprocess.py`)
 
-| 파일·폴더 | 역할 |
+| 인자 | 뜻 |
 |---|---|
-| [src/final_preprocessing_config.json](src/final_preprocessing_config.json) | 공통 FINAL 설정. ROI·리사이즈·MSR/Gamma/Gaussian 활성화 여부와 후보 값을 저장 |
-| [src/adaptive_preprocess.py](src/adaptive_preprocess.py) | FINAL 처리 순서, 적용 판단, 품질값·마스크·처리 시간 반환. GT와 검출기에 접근하지 않음 |
-| [src/preprocess.py](src/preprocess.py) | 공통 기하·보정 연산과 공개 `preprocess()` 인터페이스. 공개 함수는 FINAL 실행으로 연결 |
-| [src/roi.py](src/roi.py) | 사다리꼴 마스크, 크기 변환된 마스크, 유효 내부 영역, 박스·마스크 교집합 계산 |
-| [src/metrics.py](src/metrics.py) | ROI 내부 품질 지표 9개 측정 |
-| [src/detect.py](src/detect.py) | D0/D1 검출과 후보의 형태 계산·종류 분류·후처리 |
-| [src/data.py](src/data.py) | 입력 목록, RDD dev/test 분할, 정답 박스 로딩 |
-| [src/evaluate.py](src/evaluate.py) | GT 좌표 변환과 종류별 hit/miss·Precision·Recall 계산 |
-| [src/visualize.py](src/visualize.py) | 검출 후보 박스 그리기 |
-| [src/paths.py](src/paths.py) | 데이터·출력 경로와 한글 경로 이미지 입출력 |
-| [src/run_pipeline.py](src/run_pipeline.py) | FINAL 전처리 → 검출 → GT 평가 → 결과·집계 저장 |
-| [src/run_final.py](src/run_final.py) | GT 없이 FINAL 전처리 → D1 검출 → 이미지별·후보별 결과 저장 |
-| [src/run_detect.py](src/run_detect.py) | `run_pipeline.py`의 공통 실행기로 연결. 별도 P0 실행은 주석으로 보존 |
-| [src/A.py](src/A.py) | 검출 없이 FINAL 전처리 이미지·품질 CSV·그룹별 그래프 저장 |
-| `labels/` | RDD 분할 CSV와 데이터별 GT CSV |
-| `tests/`, `backups/` | 기능 검증과 비교용 원본 자료. 백업 5개 파일은 테스트에서 사용 |
+| `--input <파일 또는 폴더>` | 사진 한 장 또는 폴더 (하위 폴더까지). `--dataset`과 둘 중 하나는 필수 |
+| `--dataset <이름>` | `rdd_dev` · `rdd_tune` · `rdd_val` · `provided` · `captured` |
+| `--images 이름 …` | 입력 중 이 파일 이름만 처리 (못 찾은 이름은 경고) |
+| `--limit N` | 정렬된 처음 N장만 (1 이상) |
+| `--config <경로>` | 설정 파일 (기본 `configs/preprocessing.json`) |
+| `--set 키.경로=값 …` | 설정 덮어쓰기 (예: `gamma.mode=off`). 값은 JSON으로 해석, 실패하면 문자열 |
+| `--output <폴더>` | 결과 폴더. 없거나 비어 있어야 함 (기존 결과를 덮어쓰지 않음) |
+| `--manual-mask <PNG>` | 한 장 입력일 때 쓸 수동 road_mask |
+| `--manual-mask-dir <폴더>` | 사진별 수동 마스크 폴더 |
+| `--edit-failed` | 자동 마스크가 FAIL이면 다각형 편집기를 연다 (GUI 필요) |
+| `--review` | PASS 결과도 편집기로 확인 · 수정 (`manual_correction.review_pass_results`와 같음) |
+| `--allow-rdd-test` | rdd_test 보호 해제 — 최종 설정이 확정된 뒤 최종 확인에만 |
 
-## 3. 고정 사다리꼴 ROI
+### B. 설정 읽기 · 검사 (`config.py`)
 
-활성 좌표는 `src/final_preprocessing_config.json`의 `geometry.roi` 한 곳에서 정의한다.
-`preprocess.py`의 기하 기본 설정도 같은 JSON에서 읽는다. 주석에 남아 있는 과거 설정은 실행하지 않는다.
+1. JSON을 읽고 `_`로 시작하는 키(설명 주석)를 지운다.
+2. `--set` 덮어쓰기를 차례로 적용한다 (없는 키를 덮어쓰려 하면 오류).
+3. 자주 틀리는 값만 검사한다: 큰 항목(roi, gamma 등)이 빠짐, Gamma · Gaussian 모드 이름,
+   Gaussian을 켰는데 σ ≤ 0, 커널 크기가 짝수. 그 밖의 값은 검사하지 않는다.
+4. 최종 설정의 SHA-256 해시를 만들어 결과에 남긴다 (같은 설정인지 확인용).
 
-```json
-{
-  "type": "trapezoid",
-  "top_y_ratio": 0.60,
-  "top_left_x_ratio": 0.075,
-  "top_right_x_ratio": 0.725,
-  "bottom_left_x_ratio": 0.05,
-  "bottom_right_x_ratio": 0.95,
-  "bottom_y_ratio": 1.00
-}
-```
+### C. 입력 목록 만들기 (`collect_images`)
 
-꼭짓점 순서는 왼쪽 위 `(0.075, 0.60)` → 오른쪽 위 `(0.725, 0.60)` → 오른쪽 아래 `(0.95, 1.00)` → 왼쪽 아래 `(0.05, 1.00)`이다.
-비율에 원본 너비−1·높이−1을 곱해 반올림하고, `cv2.fillConvexPoly`로 마스크를 만든다.
-외접 직사각형을 자른 뒤 종횡비를 유지하며 긴 변을 1024로 맞춘다. 축소는 AREA, 확대는 CUBIC, 마스크는 NEAREST를 사용한다.
-사다리꼴 밖은 검정으로 채우고 검출·품질 측정에서 제외한다. 원근 변환이나 사다리꼴 워핑은 하지 않는다.
-
-## 4. 실행 환경과 입력
-
-Windows / Python 3.14.7 환경에서 OpenCV 4.10.0, NumPy 2.4.4, Matplotlib 3.10.8로 실행을 검증했다.
-의존성은 [requirements.txt](requirements.txt)에 고정돼 있다. OpenCV 창을 사용하지 않으므로 `opencv-python-headless`를 설치한다.
-같은 환경에 다른 OpenCV 배포판을 함께 설치하지 않는다.
-
-프로젝트 폴더에서 가상 환경을 준비한다.
-
-```powershell
-py -m venv .venv
-.\.venv\Scripts\python -m pip install -r requirements.txt
-```
-
-이하 명령의 `py` 대신 `.\.venv\Scripts\python`을 사용하면 해당 가상 환경에서 실행한다.
-`A.py`의 한글 그래프에는 맑은 고딕·나눔고딕 등 지원되는 한글 글꼴이 필요하다.
-
-```text
-data/
-├── README.md
-├── provided/                  제공 이미지
-├── captured/                  직접 촬영 이미지
-└── RDD2020_train/train/
-    ├── img/                   RDD 원본 이미지
-    └── ann/                   <이미지 파일명>.json 정답
-
-labels/
-├── split_rdd.csv              RDD dev/test 분할
-├── viewpoint_rdd.csv          촬영 관점 라벨
-└── <데이터 이름>.csv          제공·촬영 이미지 GT가 있으면 배치
-```
-
-입력 배치는 [data/README.md](data/README.md), 분할 설명은 [labels/README.md](labels/README.md)를 참고한다.
-RDD 분할은 dev 563장·test 241장이다. 현재 개발 실행 예시는 `rdd_dev`만 사용한다.
-`viewpoint_rdd.csv`는 보존된 라벨 자료이며 현재 실행기는 이를 읽지 않는다.
-
-RDD GT는 Supervisely JSON에서 균열 3종을 `crack`, 포트홀을 `pothole`로 읽고 기타 손상은 제외한다.
-제공·촬영 이미지 GT CSV는 `image,x,y,w,h,type` 형식이다.
-정답 파일이 없으면 평가 실행도 검출은 수행하지만 해당 이미지의 GT 평가값은 생성하지 않는다.
-`run_final.py`와 `A.py`는 GT 파일을 읽지 않는다. 기본 RDD 입력에는 이미지와 분할 CSV가 필요하다.
-
-데이터·출력을 다른 위치에 두려면 실행 전에 환경변수를 지정한다. 데이터 내부 구조는 위와 같아야 한다.
-
-```powershell
-$env:CV_DATA_DIR = "D:\CV_data"
-$env:CV_OUTPUT_DIR = "D:\CV_outputs"
-```
-
-## 5. 실행 명령
-
-**FINAL 전처리·검출·GT 평가: 먼저 개발 이미지 5장으로 확인**
-
-```powershell
-py src/run_pipeline.py --dataset rdd_dev --limit 5 --save-images 5
-```
-
-**개발 세트 전체 평가와 검출 이미지 전체 저장**
-
-```powershell
-py src/run_pipeline.py --dataset rdd_dev --save-images -1
-```
-
-**GT 없이 FINAL/D1 검출 및 후보별 박스 저장**
-
-```powershell
-py src/run_final.py --dataset rdd_dev --save-images -1
-```
-
-**전처리 이미지·품질 CSV·그래프만 저장**
-
-```powershell
-py src/A.py --limit 5
-py src/A.py --input "data/captured"
-```
-
-`A.py`는 기본적으로 `rdd_dev`를 처리하며, 검출 박스가 없는 전처리 이미지를 저장한다.
-`run_detect.py`는 `run_pipeline.py`와 같은 옵션·출력을 사용한다.
-평가·검출 실행기의 기본 입력은 `provided`, 기본 검출기는 D1이다.
-
-| 옵션 | 적용 범위·동작 |
+| 순서 | 처리 |
 |---|---|
-| `--dataset provided / captured / rdd_dev` | 평가·검출 실행기의 입력 선택 |
-| `--limit N` | 처음 N장만 처리 |
-| `--save-images N` | 평가·검출 이미지 저장 수. 기본 5, 0은 저장 생략, −1은 전부 저장. CSV는 처리한 모든 이미지에 대해 저장 |
-| `--config 경로.json` | 모든 실행 파일에서 FINAL 형식의 설정 파일 지정 |
-| `--detectors D0 D1` | `run_pipeline.py`·`run_detect.py`에서 기존 두 검출기 비교 |
-| `--no-keypoints` | `run_pipeline.py`·`run_detect.py`에서 SIFT 특징점 측정 생략 |
-| `--conditions FINAL` | 평가 실행기의 활성 조건. P0/P1/P1+는 허용하지 않음 |
-| `--output 새폴더` | `run_final.py`의 출력 위치 지정. 기존 내용이 있는 폴더는 거부 |
+| 1 | `--dataset`: RDD는 `labels/split_rdd.csv`(dev/test) · `labels/split_rdd_dev.csv`(tune/val)로 고르고, `provided`/`captured`는 `data/` 아래 폴더. `rdd` · `rdd_test`는 `--allow-rdd-test` 없이는 거부 |
+| 1′ | `--input`: 파일이면 그 한 장. 폴더면 하위까지 확장자 `.jpg .jpeg .png .bmp .tif .tiff .webp` 파일 (`.`으로 시작하는 숨김 경로 제외), 정렬 |
+| 2 | `--images` 이름 거르기 |
+| 3 | **rdd_test 보호**: `split_rdd.csv`의 test 이미지(241장)는 폴더 입력이어도 건너뛰고 몇 장 건너뛰었는지 알린다 |
+| 4 | `--limit` |
+| 5 | `image_id` = 입력 폴더 기준 상대 경로(확장자 제외)를 `__`로 이은 것 (예: `sub__Japan_000015`) |
 
-`run_final.py`의 CLI는 `provided`·`captured`·`rdd_dev`만 허용한다.
-평가 실행기는 `rdd`·`rdd_test`도 지원하므로 개발 실험에서는 `rdd_dev`를 지정한다.
+입력이 0장이면 오류로 멈춘다. `--manual-mask`는 한 장 입력일 때만 쓸 수 있다.
 
-## 6. 생성되는 출력
+### D. 결과 폴더 (`new_run_dir`)
 
-| 실행 파일 | 출력 위치 | 저장 파일 |
+기본 `outputs/preprocessing/run_YYYYmmdd_HHMMSS/` (한국 시간, 같은 초에 겹치면 `_2`, `_3` …).
+처리를 시작하기 전에 `run_config.json`을 먼저 쓴다 (중간에 멈춰도 어떤 설정으로 돌렸는지 남도록).
+
+### E. 영상 읽기 (`image_io.read_image`)
+
+- 한글 경로 대응을 위해 `np.fromfile` + `cv2.imdecode`로 읽는다 (`IMREAD_COLOR` → 회색조 · 알파 채널 영상도 BGR 3채널로 읽힘).
+- 없는 파일 · 빈 파일 · 해독 실패는 `ImageLoadError`가 난다. 그 사진은 `status = error`, `stage = read`로 기록하고 **배치는 계속**된다.
+- 형식 검사: 비어 있지 않은 `uint8` `H×W×3` 배열이어야 한다. 자동 변환은 하지 않는다.
+
+### F. 수동 마스크 입력 (`mask_editor`)
+
+- `--manual-mask-dir`에서 `<이름>.png` → `<이름>_road_mask.png` → `<이름>/road_mask.png` 순서로 찾는다.
+- 회색조로 읽어 **128 이상 = 도로**(255), 나머지 0으로 만든다. **원본과 크기가 같아야** 하고, 도로 면적이 영상의 **0.1% 이상**이어야 한다.
+- 못 쓰는 마스크는 경고(`external_mask_unusable`)를 남기고, 그 사진은 자동 마스크로 처리한다.
+- 수동 마스크가 있으면 **자동 검증 결과(PASS/FAIL)와 관계없이** 그것을 최종 road_mask로 쓴다. 자동 마스크와 검증 결과는 기록용으로 계속 계산한다.
+
+---
+
+## 3. 처리 (`pipeline.process_image`)
+
+### ① 작업 영상 — `roi.work_long_side = 1024`
+
+원본을 긴 변 1024로 줄여 ②~⑥을 계산한다 (INTER_AREA). 1024보다 작은 영상은 그대로 쓴다.
+
+### ② 특징 지도 — `roi.features`
+
+| 지도 | 계산 | 수치 |
 |---|---|---|
-| `run_pipeline.py`, `run_detect.py` | `outputs/pipeline/run_<시각>/` | `results.csv`, `summary.csv`, `run_config.json`, `images/FINAL_<검출기>/*.png` |
-| `run_final.py` | `outputs/final_runtime/<시각>/` | `results.csv`, `detections.csv`, `config.json`, `images/*.png` |
-| `A.py` | `outputs/A/run_<시각>/` | `results.csv`, `summary.csv`, `groups_template.csv`, `run_config.json`, `FINAL/` 이미지, `plots/` 그래프 5장 |
+| `lab` | Gaussian 평활 후 CIE L\*a\*b\* (float, L\* 0~100) | `smooth_sigma 2.0` |
+| `gradient` | L\*를 평활한 뒤 Sobel 3×3 크기 ÷ 8 (단위: L\*/px) | `gradient_sigma 1.0` |
+| `texture` | 평활 전 L\*의 \|Laplacian 3×3\|를 Gaussian 국소 평균 | `texture_sigma 2.0` |
 
-### 평가 실행의 CSV
+모든 단계에서 쓰는 색 거리:
 
-- `results.csv`: 이미지×검출기당 한 행. FINAL 적용 여부·값, 품질 5개, 에지·SIFT 수, 종류별 후보 수·면적, 전처리·검출 시간, GT가 있으면 GT 수·적중 수·정답과 겹친 후보 수를 저장한다.
-- `summary.csv`: 검출기·품질 그룹별 평균과 종류별 Precision·Recall을 저장한다. GT 평가값은 그룹의 개수를 합산해 계산한다.
-- `run_config.json`: 실제 전처리·검출 설정, 입력 정보, 라이브러리 버전을 저장한다.
-
-### GT 없는 FINAL 실행의 CSV
-
-- `results.csv`: 이미지당 한 행. 품질 9개, MSR/Gamma/Gaussian 적용 여부와 값, 전체 후보 수, 전처리·검출·합산 시간을 저장한다.
-- `detections.csv`: 검출 후보당 한 행. 이미지 이름, 종류, `bbox_xywh`를 저장한다. 박스는 **ROI 자르기·리사이즈 후 이미지 좌표**다.
-- `config.json`: 실제 FINAL 설정과 검출 설정·검출 코드 해시 등을 저장한다.
-
-`run_final.py`는 GT 정확도와 집계 `summary.csv`를 생성하지 않는다. GT 비교는 평가 실행기를 사용한다.
-전처리·검출 시간에는 이미지 읽기·출력 저장이 포함되지 않는다. FINAL 전처리 시간에는 내부 품질 측정 시간이 포함된다.
-
-검출 이미지는 균열 후보를 빨간색, 포트홀 후보를 파란색으로 표시한다.
-평가 이미지에는 ROI에 남은 GT를 초록색으로 함께 그린다. 검출 후보가 실제 손상으로 확정됐다는 뜻은 아니다.
-출력은 실행별 폴더에 저장되며, 과거 결과 폴더는 새 실행으로 자동 갱신되지 않는다.
-
-## 7. 품질값과 GT 평가 해석
-
-품질 지표는 `gray_mean`, `gray_std`, `block_mean_std_4x4`, `saturation_ratio`, `dark_ratio`,
-`bright_ratio`, `hsv_v_mean`, `laplacian_variance`, `noise_sigma`다.
-사다리꼴 밖의 검정 패딩과 필요한 필터 경계 응답을 제외해 계산한다.
-ROI 내부에 남은 비도로 영역도 측정 대상이므로 품질값이 도로 분할 정확도를 의미하지는 않는다.
-노면 질감·실제 균열도 선명도와 노이즈 추정값에 영향을 준다.
-
-자동 품질 그룹은 선택적 MSR 이후·Gamma 이전 품질값으로 분류한다.
-Laplacian 분산이 50 미만이면 `blur`, 4×4 블록 밝기 편차가 44 초과이면 `local_illumination`이며 두 태그가 함께 붙을 수 있다.
-
-GT 비교는 같은 종류 후보 박스와 GT 박스가 **양의 면적으로 겹치면 적중**하는 기존 방식이다.
-일대일 IoU 매칭이나 mAP 평가는 하지 않는다.
-Precision은 정답과 겹친 후보 수÷전체 후보 수, Recall은 적중한 GT 수÷ROI에 남은 GT 수다.
-ROI 밖으로 완전히 제외된 GT는 이 Recall의 분모에 들어가지 않는다.
-따라서 원본 GT 전체를 분모로 계산한 다른 실험 결과와 동일한 수치로 비교하면 안 된다.
-
-## 8. 테스트와 GitHub 공유
-
-```powershell
-py -m unittest discover -s tests
+```text
+d = √((w_L·ΔL*)² + Δa*² + Δb*²),   w_L = lightness_weight = 0.35
 ```
 
-FINAL 통합 후 테스트 39개가 통과했고, 각 실행 경로를 실제 `rdd_dev` 이미지 5장으로 확인했다.
-CSV·이미지·품질 그래프 저장과 실행 경로 간 FINAL 품질값·D1 후보 수 일치를 검증했다.
-이 검증은 실행 동작 확인이며 전체 데이터셋의 성능 개선을 의미하지 않는다.
-원본 데이터 없이도 단위 테스트를 실행할 수 있다. `backups/`는 테스트에서 읽으므로 함께 보존한다.
+색(a\*b\*) 위주로 보고 밝기는 0.35배만 반영한다. 그림자는 밝기를 크게 바꾸지만 색은 덜 바꾸기 때문이다.
 
-| GitHub에 포함 | GitHub에서 제외 |
-|---|---|
-| `src/` 전체와 `final_preprocessing_config.json` | `data/`의 원본 이미지·RDD GT JSON |
-| `labels/`, `tests/`, 테스트용 `backups/` | `outputs/`의 생성 이미지·CSV·JSON |
-| `README.md`, `data/README.md`, `requirements.txt` | `.venv/`, 캐시, 개인 IDE 설정 |
-| `.gitignore`, `.gitattributes` | |
+### ③ 격자 특징 — `roi.grid`
 
-**로컬 원본 데이터는 삭제하지 않고 업로드 대상에서 제외한다.**
-현재 `.gitignore`는 `data/README.md`를 제외한 데이터와 `outputs/` 등을 Git 추적에서 제외한다.
-GitHub 웹에서 파일을 직접 업로드할 때는 `.gitignore`가 자동 필터링하지 않으므로 제외할 파일을 직접 구분해야 한다.
-코드만 받은 팀원은 실제 검출 실행에 필요한 입력 데이터를 각자 준비해야 한다.
-출력 폴더가 없어도 실행할 수 있으며 프로그램이 새 결과를 생성한다.
-`analysis/`는 현재 실행에 필요하지 않다. 자동 후보 탐색·과거 실험 분석 기능은 포함하지 않지만 전처리·품질 측정·검출·CSV 집계는 유지한다.
+작업 영상을 `cell_size 32` × 32 칸으로 나눈다. 칸마다 다음을 잰다.
+- 평균 · 표준편차 Lab, 중심 위치(0~1)
+- 질감 평균, 기울기 평균
+- 경계 밀도: `gradient > edge_threshold 6.0`인 화소 비율
+- 채도 √(a\*²+b\*²), 8-이웃 칸과의 평균 색 거리, 칸 채움 비율
 
+가장자리에서 잘린 칸은 채움 비율이 `min_cell_fill 0.5` 미만이면 시드 후보에서 뺀다.
 
----
+### ④ 시드 고르기 — `roi.seeds`
 
-# CV — PBL 모듈 1: 저품질 도로 영상의 손상(균열·포트홀) 후보 추출
+칸마다 6개 성분(0~1)의 **가중 기하평균**으로 점수를 매긴다. 기하평균이라서 한 성분이라도 0에 가까우면 전체 점수가 낮아진다.
 
-## 실행 · 측정 · 기록 가이드 (맨 위 src/)
-
-누가 돌려도 **같은 방법으로 Recall · Precision을 재고, 결과가 자동으로 쌓이게** 하는 명령 모음입니다. 비교 · 판정 규칙의 기준 문서는 [`EVALUATION.md`](EVALUATION.md)입니다.
-
-### 1. 준비 (한 번)
-
-```bash
-pip install -r requirements.txt          # Python 3.12 · OpenCV 4.13
-# gf3(가이드 필터)만 cv2.ximgproc가 필요 → opencv-python 대신 opencv-contrib-python (같은 버전)을 설치
+```text
+S = exp( Σ w_i · ln(max(s_i, 1e-6)) / Σ w_i )
 ```
-RDD 이미지 · 정답을 `data/RDD2020_train/train/{img,ann}/`에 넣습니다 ([`data/README.md`](data/README.md)). 모든 명령은 **저장소 맨 위 폴더**에서 실행합니다.
 
-### 2. 저장된 설정으로 돌리기 (`--config`)
-
-설정은 [`configs/`](configs/)에 파일로 있습니다. 같은 파일을 쓰면 같은 결과가 나옵니다.
-
-| 설정 | 내용 | 개발 563장 R · P · 가짜/장 | 테스트 241장 R · P |
+| 성분 | 식 | 수치 (가중치) | 의도 |
 |---|---|---|---|
-| `baseline` | 기준선 — 수업 기술만 (감마 + 가우시안 + Canny) | 0.278 · 0.066 · 5.2 | 0.255 · 0.066 |
-| `old_main` | 이전 주 검출기 (Black-hat + 양쪽 확인 + 잇기) | 0.360 · 0.080 · 5.5 | 0.328 · 0.091 |
-| **`p2bd`** | **검출기 최종** — Hessian 찾기 · 텐서 전파 · 노면 단서 · 깊이 | **0.571 · 0.075 · 9.3** | **0.482 · 0.077** |
-| `gf3` | `p2bd` + 가이드 필터 (전처리 담당 제안) | 0.555 · 0.104 · 6.3 | 0.482 · 0.110 |
+| position | cy^p · (1 − h·\|2cx − 1\|) | p 0.5 · h 0.3 (1.0) | 아래쪽 · 가운데 |
+| neutral_color | exp(−(chroma / s_c)²) | s_c 18 (1.0) | 무채색 (아스팔트 · 콘크리트) |
+| homogeneity | exp(−edge_density / s_e) | s_e 0.2 (1.0) | 강한 경계가 적음 (차량 · 건물 제외) |
+| texture | [t_lo, t_hi] 안이면 1, 아래면 (t/t_lo)², 위면 t_hi/t | [2, 45] (1.0) | 너무 매끈(하늘 · 보닛) · 너무 거침(수목) 제외 |
+| brightness | L\* ∈ [L_lo, L_hi]면 1, 밖이면 margin 동안 선형 감소 | [10, 80] · margin 15 (1.0) | 아주 밝은 칸 제외, 그림자 노면은 유지 |
+| neighbor_similarity | 8-이웃 평균 [exp(−d/s_n) · 이웃의 예비 점수] | s_n 6 (**1.5**) | 비슷한 도로다운 칸에 둘러싸임 |
 
-```bash
-# 빠른 확인 (20장, 1분 안팎)
-python src/run_pipeline.py --dataset rdd_dev --config configs/p2bd.json --limit 20 --no-keypoints
+선택 규칙 (무작위 없음): 점수 내림차순으로 보면서 아래 조건을 모두 만족하는 칸을 최대 `count_max 5`개 고른다.
+1. 점수 ≥ `min_score 0.6`
+2. 이미 고른 시드와의 칸 거리(Chebyshev) ≥ `min_distance_cells 3`
+3. 첫 시드(최고 점수)와 일관됨: 채도 거리 ≤ 5.0 · 밝기 차 \|ΔL\*\| ≤ 25 · 질감 비 ≤ 2.0
 
-# 개발 세트 전체 (약 9분 — 텐서 전파 때문. baseline · old_main은 약 2분)
-python src/run_pipeline.py --dataset rdd_dev --config configs/p2bd.json --no-keypoints --bootstrap 0 --note "무엇을 바꿨는지 한 줄"
+시드가 `count_min 3`개 미만이면 경고만 남긴다. 0개면 ⑧에서 FAIL이다.
+첫 시드가 도로가 아니면 이후 시드도 틀릴 수 있다. 이것은 알려진 한계이며, 검증과 수동 확인으로 보완한다.
 
-# 설정 일부만 바꿔서 시험: 명령줄 옵션이 설정 파일보다 우선
-python src/run_pipeline.py --dataset rdd_dev --config configs/p2bd.json --set crack_min_length=60 --note "길이 45 → 60"
-```
-- `--config` 파일의 키 = 명령줄 옵션 이름(`-` 대신 `_`) · `set` = `--set`과 같은 검출 설정 사전. 모르는 키는 실행 전에 오류
-- 설정을 새로 만들면 `configs/<이름>.json`으로 저장해 같이 올립니다 (설정 이름이 기록에 남음)
-- 결과 폴더: `outputs/pipeline/run_<시각>/` — `summary.csv`(묶음별 지표) · `results.csv`(사진별) · `run_config.json`(실제 설정 · 코드 버전) · `images/`
+### ⑤ Region Growing — `roi.region_growing`
 
-### 3. 측정 방법 — Recall · Precision (in50)
+시드 칸의 평균 Lab, 색 편차 σ_ab, 질감 중앙값을 기준으로 삼아, 화소 p가 아래 조건을 **모두** 만족하면 받아들인다.
 
-`src/evaluate.py` · 균열과 포트홀을 따로 잽니다.
+| 조건 | 식 | 수치 |
+|---|---|---|
+| 색 | d(p) ≤ T = min(6.0 + 1.0·σ_ab, 9.0) | `color_threshold 6.0` · `seed_std_scale 1.0` · `max_color_threshold 9.0` |
+| 밝기 차 상한 | \|ΔL\*\| ≤ 30 | `max_lightness_diff 30` (흰 차선 · 하늘 차단) |
+| 국소 기울기 | gradient ≤ 5.0 | `max_gradient 5.0` (연석 · 차량 윤곽에서 멈춤) |
+| 질감 비 | texture / 기준 ∈ [0.35, 2.5] | `texture_ratio_range` |
+| 연결 | 시드에서 받아들인 화소만 거쳐 8-이웃으로 이어짐 | `connectivity 8` |
 
-| | 정의 |
+구현은 "조건을 만족하는 화소의 연결 요소 중 시드 칸을 포함하는 것"을 고르는 방식이며, 큐 BFS와 결과가 같다.
+시드 칸 면적의 `min_seed_cell_coverage 0.3` 미만만 덮으면 그 시드는 자라지 못한 것으로 기록한다. 시드 영역들의 **합집합**이 결과다.
+
+그림자: 색이 같다면 밝기 차이가 약 17~26(L\*) 이내일 때 받아들여진다 (색 거리 기준 6~9를 0.35로 나눈 값).
+이보다 진한 그림자, 그리고 경계가 날카로워 기울기 상한에 막히는 그림자는 빠진다. 단, 그림자 안에 따로 시드가 있으면 포함된다.
+
+### ⑥ 마스크 정리 — `roi.refine`
+
+| 순서 | 연산 | 수치 |
+|---|---|---|
+| 1 | closing (타원) — 균열 · 틈으로 끊긴 노면 잇기 | `close_kernel 7` |
+| 2 | opening (타원) — 가는 돌기 · 점 잡음 지우기 | `open_kernel 5` |
+| 3 | 구멍 채우기 — 테두리에 닿지 않는 배경 중 영상 면적의 2% 이하만 | `fill_holes_max_area_ratio 0.02` |
+| 4 | 작은 연결 요소 삭제 — 영상 면적의 1% 미만 | `min_component_area_ratio 0.01` |
+
+가장 큰 요소 하나만 남기지 않는다 (중앙분리대로 나뉜 도로를 보존하기 위함). 노면 위 차량 같은 큰 구멍은 남겨 두고 검증에서 본다.
+
+### ⑦ 원본 크기 복원
+
+작업 해상도 마스크를 float로 원본 크기까지 선형 보간하고, `upsample_threshold 0.5` 이상을 도로(255)로 본다 → 자동 road_mask.
+
+### ⑧ 검증과 최종 road_mask 결정 — `validation`
+
+| 지표 | 정의 | 기준 |
+|---|---|---|
+| mask_area_ratio | 도로 화소 / 영상 화소 | ≥ 0.10 |
+| largest_component_ratio | 가장 큰 8-연결 요소 / 도로 화소 | ≥ 0.80 |
+| hole_ratio | 구멍 면적 / 구멍 채운 면적 | ≤ 0.15 |
+| seed_consistency | 최종 마스크 안의 시드 수 / 시드 수 | ≥ 0.60 |
+
+하나라도 못 넘으면 **FAIL**이다 (상태는 PASS/FAIL 둘뿐). 시드 0개나 빈 마스크도 FAIL이고, 정의되지 않은 지표도 FAIL로 처리한다(`undefined_metric_policy fail`). FAIL 사유는 모두 기록한다.
+
+최종 road_mask는 다음 우선순위로 정한다.
+1. **수동 마스크 파일** (F에서 읽은 것) → `source = manual`
+2. **편집기** (`--edit-failed`이고 FAIL일 때, 또는 `--review`) — 자동 마스크에서 시작해 다각형으로 고친다.
+   a 더하기(기본) · d 빼기 · r 바꾸기 · e 가장 큰 외곽선 불러오기 · Esc 다시 그리기 · Enter 확정 · q 취소 → `source = manual`
+3. **자동 마스크** — PASS일 때만 → `source = auto`
+4. 셋 다 해당하지 않으면(FAIL이고 수동 마스크 없음): 전처리는 **`manual_required`로 여기서 멈춘다** (후보 마스크만 저장).
+   검출 실행기(`run_road_detection.py`)는 기본으로 이 후보 마스크를 수동 마스크 자리에 넣어 다시 처리하고 `unverified_mask = True`로 표시한다 (`--on-fail skip`이면 건너뜀).
+
+FAIL 마스크를 영상 전체나 고정 사다리꼴로 몰래 바꾸지 않는다. 최종 마스크가 비어 있으면 error다.
+
+### ⑨ analysis_mask — `analysis_mask`
+
+road_mask **사본**을 `rect 5×5`로 1회 침식한다. 경계의 불확실한 화소를 품질 측정에서 빼기 위함이며, road_mask 자체는 그대로 둔다. 영상 테두리는 침식하지 않는다.
+남은 화소가 `min_pixels 2000` 미만이거나 road_mask의 `min_ratio_of_road 0.3` 미만이면 측정이 불충분하다고 보고, 조건부 보정을 하지 않는다 (경고 `analysis_mask_too_small`).
+
+### ⑩ 품질 측정 — `quality`
+
+긴 변 `measurement_long_side 1024` 사본에서 analysis_mask 안 화소만 집계한다 (영상은 INTER_AREA/CUBIC, 마스크는 NEAREST로 크기 변경. 출력 영상에는 영향 없음).
+회색조 = 0.299R + 0.587G + 0.114B (0~255).
+
+| 지표 | 정의 |
 |---|---|
-| **맞힘 (in50)** | 후보 박스 면적의 **절반 이상이 같은 종류 정답 박스 안**이면 그 정답을 맞힘. 정답 하나에 맞힘은 최대 1개 (겹침이 큰 쌍부터 짝짓기) |
-| 같은 정답 안의 추가 조각 | 맞힘도 가짜도 아님 (균열을 조각으로 잡는 건 봐주되, 잘게 쪼개 점수를 올리는 건 막음) |
-| **가짜** | 어느 정답과도 짝이 안 된 후보 |
-| **Recall** | 맞힌 정답 수 ÷ 전체 정답 수 — **ROI 밖으로 잘린 정답도 분모에 넣어 놓침으로 셈** (ROI를 좁혀 Recall을 부풀리지 못하게) |
-| **Precision** | 맞힌 후보 수 ÷ (맞힌 후보 + 가짜) |
-| **가짜/장** | 가짜 수 ÷ 정답이 있는 사진 수 |
+| gray_mean · gray_std | 평균 · 모집단 표준편차 |
+| dark_ratio · bright_ratio | 회색조 < 40 · > 215 화소 비율 |
+| saturation_ratio | 0 또는 255 화소 비율 |
+| block_mean_std_4x4 | 마스크 외접 영역을 4×4로 나눈 블록 평균들의 표준편차 (블록당 50화소 이상) |
+| laplacian_variance | 4-이웃 Laplacian의 분산 (선명도) |
+| noise_sigma | Immerkær 추정 σ = √(π/2) · Σ\|R\| / (6N), R = [[1,−2,1],[−2,4,−2],[1,−2,1]] 응답 |
 
-- 합산 방식: 사진마다 맞힘 · 가짜 · 놓침을 센 뒤 **전체를 더해서** 비율을 냅니다 (사진별 평균 아님)
-- `summary.csv`의 `crack_in50_recall` · `crack_in50_precision` · `crack_in50_fppi`(= 가짜/장)가 이 값입니다. iou50 · iou30도 같이 기록되지만 판정에는 in50만 씁니다
-- 목표: Recall 우선 + Precision 하한 — **달성 R 0.50 · P 0.10** · 도전 R 0.70 · P 0.30 · 지키는 선 P ≥ 0.066
-- ⚠️ `CV-main/`의 평가는 "겹치면 적중" + 잘린 정답 제외라 **숫자를 서로 비교하면 안 됩니다**
+노이즈 · 선명도는 필터 창이 도로 화소만 보도록, road_mask를 3×3 침식한 영역에서만 집계한다.
+`noise_sigma`는 노면 질감과 균열 같은 실제 고주파 구조도 노이즈로 센다. 값이 크다고 해서 꼭 없애야 할 잡음이라는 뜻은 아니다.
 
-### 4. 기록 — 자동 + 사람
+### ⑪ 조건부 Gamma — `gamma`
 
-| 파일 | 누가 | 무엇 |
-|---|---|---|
-| [`results/runs.csv`](results/runs.csv) | **자동** — 정답이 있는 실행마다 한 줄씩 덧붙음 | 시각 · 실행 이름 · 설정 이름 · 데이터 · 균열/포트홀 정답 수 · 맞힘 · 가짜 · R · P · F1 · 가짜/장 · 코드 버전(커밋, 고친 채 돌리면 `+수정`) · `--note` 메모 |
-| [`results/experiments.md`](results/experiments.md) | **사람** — 실험 하나 끝날 때 | 무엇을 바꿨나 · 왜 · 미리 정한 결정 규칙 · 결과 · 결정(✅/❌) · 실행 이름 |
-
-- 기록을 남기기 싫은 시험 실행은 `--no-log`. `--limit`으로 일부만 돌린 것도 기록되며 `limit` 칸에 장수가 남습니다
-- 공유: 실험 후 `results/runs.csv` · `results/experiments.md` · 새 `configs/*.json`을 커밋해서 올립니다 (`outputs/`는 올리지 않음)
-
-### 4-1. 찾기를 바꿨으면 강한 기준부터 맞추기
-
-```bash
-python analysis/calibrate.py --config configs/p2bd.json --set guided_filter='{"r":4,"eps":"var","eps_scale":2.0}' --save configs/새이름.json
+```text
+I_out = round(255 · (I_in / 255)^γ)     BGR 각 채널, 256칸 LUT, road_mask 안 화소만 (γ < 1 → 밝아짐)
 ```
-강한 흔적 총수를 기준과 같게 하는 `line_hi_abs`를 찾아 새 설정에 넣습니다 (이유 · 언제 필요한지는 [`EVALUATION.md`](EVALUATION.md) 3절 ③).
 
-### 5. 두 실행 비교 — 의미 있는 차이인가
+1. **적용 조건** (`logic AND`): gray_mean < 80 **그리고** dark_ratio > 0.07
+2. **γ 고르기** (`selection adaptive`): 후보 `[1.0, 0.9, 0.8, 0.7]` 중 1 미만인 값을 약한 것부터(0.9 → 0.8 → 0.7) 적용하고 품질을 다시 잰다.
+   - 두 조건이 모두 풀리면(gray_mean ≥ 80, dark_ratio ≤ 0.07) 그 **첫 γ**를 쓴다.
+   - 끝까지 안 풀리면 포화 방지를 통과한 가장 강한 γ를 쓴다.
+3. **포화 방지**: 보정 후 saturation_ratio가 0.02를 넘고 보정 전보다 커졌으면 그 γ를 버린다. 그보다 강한 후보는 보지 않는다. 모든 후보가 걸리면 보정하지 않는다.
 
-```bash
-python analysis/compare_runs.py 기준=run_20261008_005056 새것=run_<시각>
-```
-- 같은 사진끼리 짝지어 1000번 다시 뽑아 Recall · Precision 차이의 **95% 범위**를 냅니다. 범위가 0을 포함하지 않으면 ✱
-- 전체 · 흐림 · 국소 조도 · 정상 그룹별로 나옵니다. 포트홀은 `--kind pothole`
-- 실행 안에 조건 × 검출기가 여러 개면 `--pick none/D1hv`처럼 하나를 고릅니다
-- 여러 값 중 고를 때는 `--split`: 튜닝 394 · 검증 169로 나눠 보여 줍니다 (튜닝에서 고르고 검증에서 확인)
+`selection fixed`로 바꾸면 `value 0.8` 하나만 쓴다 (v1.0 방식). 시도한 γ와 그 결과는 metadata `gamma.tried`에 남는다.
 
-### 6. 데이터 세트 규칙
+### ⑫ 노이즈 재측정
 
-| 이름 | 장수 | 쓰는 곳 |
-|---|---|---|
-| `rdd_dev` | 563 | 실험 · 값 고르기는 여기서만 |
-| `rdd_tune` / `rdd_val` | 394 / 169 | `rdd_dev`를 나눈 것 — 튜닝에서 고르고 검증에서 확인 ([`labels/split_rdd_dev.csv`](labels/split_rdd_dev.csv)) |
-| `rdd_test` | 241 | **최종 확인용** — 결과를 보고 설정을 고치면 안 됨. 쓸 때마다 `results/experiments.md`의 "테스트 세트 사용 기록"에 적기 |
-| `provided` · `captured` | 13 · 촬영분 | 정답 CSV(`labels/<이름>.csv`)가 생기면 자동으로 평가 |
+Gamma를 적용했으면 그 영상에서 품질을 다시 재고(`after_gamma`), 적용하지 않았으면 초기값을 그대로 쓴다. Gaussian 판단은 이 값으로 한다.
+
+### ⑬ 조건부 Gaussian — `gaussian` (v1.1: `mode off`)
+
+켜면(`conditional`) noise_sigma ≥ 0.6일 때 3×3, σ 0.8 Gaussian을 도로 안에만 적용한다.
+마스크 인식 방식 out = G(I·M) / G(M)을 써서 경계에서 비도로 화소 값이 섞이지 않게 한다.
+**꺼 둔 이유**: 노면 질감 때문에 사진의 56%에 적용됐고, 적용된 사진에서 균열 Recall이 0.117 떨어졌다 (95% 구간이 0을 포함하지 않음).
+
+### ⑭ 최종 품질 · ⑮ 출력 규약 검사
+
+최종 영상의 품질을 재고 초기값과의 차이를 계산한다. 그다음 아래 규약을 검사하며, 어기면 error다.
+- 출력 영상 크기 = 입력 크기, road_mask 크기 = 입력 H×W
+- **road_mask 밖 화소가 입력과 완전히 같음**
+
+처리 중 어느 단계에서든 예외가 나면 그 사진만 `status = error`(실패한 단계 · 원인 기록)로 끝내고, 배치는 다음 사진으로 넘어간다.
 
 ---
 
+## 4. 출력
 
-```
-① 사진 고치기 (개발 A)  →  ② 찾기 (개발 B)  →  ③ 재기 (개발 A)
-preprocess.py             detect.py           metrics.py · evaluate.py (초안)
-                    └──── src/run_pipeline.py 로 한 번에 ────┘
-```
+### 상태 (`metadata.status`)
 
-## 폴더
-
-| 폴더 | 내용 | git |
+| 상태 | 뜻 | 저장되는 영상 |
 |---|---|---|
-| `src/` | 파이프라인 코드 — A: `preprocess.py` `metrics.py` `A.py` / B: `detect.py` `visualize.py` `run_detect.py` / 공통: `paths.py` `data.py`(정답 로더) `evaluate.py`(hit/miss) `run_pipeline.py`(전체 실행) | 올림 |
-| `analysis/` | 데이터 분석·평가 스크립트 (13장 실측, RDD 분석, 색 채널, 검출기 평가, 계획서 그림) | 올림 |
-| `labels/` | 정답 박스 CSV (문서 담당) | 올림 |
-| `results/` | **팀이 공유할 결과** (CSV·요약 md). 실행 출력 중 남길 것만 골라서 옮긴다 | 올림 |
-| `data/` | 데이터 — 각자 넣는다 ([`data/README.md`](data/README.md)) | 안 올림 |
-| `outputs/` | 실행할 때마다 생기는 출력 (이미지·CSV·그래프) | 안 올림 |
+| `success` | 최종 road_mask와 보정 영상이 만들어짐 | processed_image · road_mask · analysis_mask · overlay |
+| `manual_required` | 자동 마스크가 FAIL이고 수동 마스크가 없음 → 보정 단계로 가지 않음 | road_mask_candidate · overlay |
+| `error` | 읽기 · 처리 · 규약 검사 실패 | (있으면) road_mask_candidate · overlay |
 
-## 환경 준비
+### G. 사진별 파일 — `run_<시각>/images/<image_id>/`
 
-Python 3.12에서 확인 (OpenCV 4.13, numpy 2.5). Windows·macOS 둘 다 같은 명령으로 동작한다.
+| 파일 | 내용 · 규약 |
+|---|---|
+| `processed_image.png` | 보정된 영상. 원본과 같은 크기 · 좌표 · BGR uint8. 도로 밖 화소는 입력과 동일 |
+| `road_mask.png` | 최종 도로 마스크. 원본 크기 uint8, 도로 255 / 비도로 0 |
+| `analysis_mask.png` | 품질 측정용 침식 마스크 (road_mask의 부분집합) · `output.save_analysis_mask` |
+| `road_mask_candidate.png` | FAIL일 때의 자동 후보 마스크 (수동 수정의 시작점) |
+| `overlay.jpg` | 검토 그림 (긴 변 최대 1024): 도로(초록 반투명 · 노랑 외곽) · analysis_mask 외곽(파랑) · 시드(빨강, 못 자란 시드는 자홍) · 상태 문구 · `output.save_debug` |
+| `metadata.json` | 아래 구조 · `output.save_metadata` |
 
-```bash
-pip install -r requirements.txt
+### `metadata.json` 구조
+
+| 키 | 내용 |
+|---|---|
+| `image_id` · `input_path` · `image_size` | 입력 정보 |
+| `config_version` · `config_sha256` | 사용한 설정 버전과 해시 |
+| `status` | success / manual_required / error |
+| `roi` | 방법 이름, 작업 배율 · 크기, 격자 크기, 시드 목록(행 · 열 · 원본 좌표 x,y · 점수 · 6개 성분 · 성장 여부 · 덮은 비율 · 색 임계값), 단계별 시간 |
+| `validation` | PASS/FAIL, 지표 값(4개 + 연결 요소 수 · 시드 수 · 도로 화소 수), 지표별 검사 결과, FAIL 사유 |
+| `manual_correction` | 수동 수정 필요 여부 · 적용 여부 · 출처(external_file / interactive_editor) · 파일 경로 |
+| `final_mask` | 최종 마스크 출처(auto / manual) · 도로 화소 수 · 면적 비율 |
+| `analysis_mask` | 커널 · 남은 화소 수 · road_mask 대비 비율 · 측정 충분 여부 |
+| `quality` | 측정 조건(배율 · 회색조 식 · 임계값), `initial` · `after_gamma` · `final` 지표 8개, 최종 − 초기 차이 |
+| `gamma` | 모드 · 선택 방식, 조건별 값과 판정, 적용 여부, 쓴 γ(`value_used`, 안 쓰면 1.0), 포화 방지 작동 여부, 시도 기록(`tried`), 사유 |
+| `noise_remeasurement` | Gaussian 판단에 쓴 noise_sigma · laplacian_variance |
+| `gaussian` | 모드 · 적용 여부 · σ · 커널 · 판단 사유 (`mode_off` 등) |
+| `timing_ms` | road_mask · validation · analysis_mask · quality_initial · gamma · noise_remeasurement · gaussian · quality_final · total |
+| `outputs` | 저장한 파일 이름 |
+| `warnings` · `errors` | 경고 목록 · 오류(단계 · 종류 · 메시지) |
+| `versions` | Python · OpenCV · NumPy 버전 |
+
+실수는 소수 6자리로 반올림하고, NaN은 저장하지 않는다.
+
+### H. 실행 단위 파일 — `run_<시각>/`
+
+| 파일 | 내용 |
+|---|---|
+| `run_config.json` | 실행 프로그램 · 인자 · 설정 파일 경로 · **실제 적용된 설정 전체** · 해시 · 사진 수 · 시작 시각 · 라이브러리 버전 (처리 전에 기록) |
+| `summary.csv` | 사진당 한 줄 (UTF-8 BOM, 엑셀에서 바로 열림). 열: image_id · input_path · status · auto_validation · fail_reasons · final_mask_source · manual_required · manual_applied · 검증 지표 4개 · n_seeds · analysis_pixels · analysis_sufficient · gamma_applied · gamma_value · gamma_reason · gaussian_applied · gaussian_sigma · gaussian_kernel · gaussian_reason · initial_품질 8개 · final_품질 8개 · time_ms · warnings · errors |
+| `run_summary.json` | 사진 수 · success 수 · 자동 PASS/FAIL 수 · 수동 수정 필요 · 적용 수 · error 수 · Gamma/Gaussian 적용 수 · 처리 시간 통계(평균 · 중앙값 · 최소 · 최대) · FAIL 사유별 개수 · 전체 소요 시간 |
+| `review_sheet.jpg` | 처음 48장의 overlay를 4열로 모은 그림 · `output.review_sheet` |
+
+화면 로그 (`output.log_level`이 `quiet`가 아니면): 사진마다 `[번호/전체] image_id: 상태 (PASS/FAIL · 마스크 출처 · γ · σ 또는 FAIL 사유) 시간`, 끝에 합계를 출력한다.
+종료 코드는 error가 0장이면 0, 있으면 1이다.
+
+### I. 검출로 넘길 때 (`detector_adapter.py` → `src/road_detection/`)
+
+`run_road_detection.py`는 사진마다 위 전처리를 실행한 뒤 이어서 다음을 한다.
+1. road_mask의 외접 사각형에 `crop_margin 16`px을 더해 잘라 내고, 긴 변 1024로 맞춘다 (영상 INTER_AREA/CUBIC, 마스크 NEAREST).
+   잘라 낸 영역 안의 비도로 화소는 검정으로 칠하지 않는다 (인공 경계가 생기지 않게).
+2. `detect()` 실행 → 후보 박스를 `to_original_bbox()`로 원본 좌표로 되돌린다.
+3. 박스 면적의 50% 이상이 도로 위면 "도로 위 후보"로 판정한다.
+4. 위 전처리 파일에 더해 `result.jpg`(도로 초록 · 균열 빨강 · 포트홀 파랑 · 도로 밖 회색) · `detections.json`을 사진별로,
+   `summary.csv` · `detections.csv` · `run_summary.json` · `review_sheet.jpg`를 실행 단위로 `outputs/road_detection/run_<시각>/`에 저장한다.
+
+---
+
+## 5. 측정된 성능 (2026-10-10, RDD2020 dev)
+
+### 도로 마스크 정확도 (사람이 그린 정답 마스크 36장)
+
+| 방법 | 평균 IoU [95%] | IoU ≥ 0.5인 사진 |
+|---|---|---:|
+| 영상 전체 | 0.398 | - |
+| 고정 사다리꼴 ROI (이전 방식) | 0.430 [0.38, 0.49] | 31% |
+| **자동 Road Mask** | **0.585 [0.50, 0.67]** | **72%** |
+
+- 오차: 실제 도로의 약 27%를 놓치고(Recall 0.726), 마스크의 약 25%가 도로가 아니다(Precision 0.745). 영상 면적 기준으로는 놓침 10.8%, 잘못 포함 5.3%.
+- 출처별 IoU: China_Drone 0.85 · China_MotorBike 0.68 · Japan 0.56 · Czech 0.54 · United_States 0.54 · India 0.49 · Norway 0.43.
+- 주된 오류: 그림자 · 차선 · 도색 너머 노면을 놓치고, 그늘진 식생 · 흙 · 차량 보닛을 도로로 잡는다.
+- 36장 중 17장은 일부러 고른 어려운 사례다. 무작위 19장만 보면 IoU 0.597이다.
+
+### 검증 (PASS/FAIL)
+
+- dev 563장 중 PASS 483장 (86%) · FAIL 80장 (14%).
+- 정답 마스크 36장 기준 PASS의 83%가 IoU ≥ 0.5였다. 그런데 **FAIL의 61%도 IoU ≥ 0.5**였다. 즉 FAIL 판정이 쓸 만한 마스크를 많이 버린다.
+  그래서 검출 실행기는 FAIL이어도 후보 마스크로 검출한다.
+
+### 손상 덮기 (dev 563장, 정답 균열 박스 744개)
+
+- 정답 균열 박스의 **88%**(654개)가 road_mask 위에 있다. Norway만 66%로 낮다.
+
+### Gamma (dev, v1.1)
+
+- 적용 112장 (20%). 고른 γ: 0.9 2장 · 0.8 22장 · 0.7 88장.
+- 도로 밝기 중앙값 54.5 → 84.1. 두 조건이 모두 풀린 비율 **55%** (v1.0의 γ 0.8 고정은 21%). 포화 한도를 새로 넘긴 경우는 없다.
+
+### 검출 성능에 대한 기여 (dev 563장, 검출기 D1v, 균열 in50, 같은 사진끼리 비교)
+
+| 전처리 | Precision | Recall | F1 | 가짜/장 |
+|---|---:|---:|---:|---:|
+| 전처리 없음 (영상 전체) | 0.062 | 0.276 | 0.101 | 5.49 |
+| 고정 사다리꼴 ROI | 0.082 | 0.333 | 0.132 | 4.93 |
+| v1.0 (γ 0.8 고정 · Gaussian 조건부 · FAIL 건너뜀) | 0.187 | 0.273 | 0.222 | 1.57 |
+| **v1.1 (현재)** | 0.179 | **0.371** | 0.241 | 2.26 |
+| 참고: 자동 마스크만 (Gamma 끔) | 0.194 | 0.363 | 0.253 | 1.99 |
+
+- 전처리 없음 → v1.1: F1 +0.140 · Recall +0.095 · 가짜 −3.24/장 (모두 95% 구간이 0을 넘음).
+- v1.0 → v1.1: Recall +0.098 (tune 394장 +0.100 · val 169장 +0.095), Precision은 차이 없음, 가짜 +0.69/장.
+- 적응형 Gamma 자체는 검출 성능을 높이지 않는다 (끈 경우보다 F1 −0.012, Precision −0.016).
+- 사람이 그린 정답 마스크를 넣어도 맞힌 균열 수가 같았다 (36장에서 24개 → 24개). ROI를 더 다듬어도 검출 이득은 작다.
+- v1.1 변경은 dev 진단으로 정했으므로 완전히 독립된 확인은 아니다. 최종 검출기 p2bd(opencv-contrib 필요)로는 아직 재지 않았다.
+
+### 처리 시간 (이 개발 PC)
+
+- 전처리 한 장 중앙값 약 200 ms (600×600 RDD 기준). 큰 영상(Norway 3650×2044 등)은 약 1~1.2 s.
+- 검출은 약 90 ms/장 (긴 변 1024).
+
+---
+
+## 6. 파일별 기능 · 실행 순서
+
+### 6-1. 각 py 파일이 하는 일
+
+실행 순서대로 나열했다. "단계"는 1절 흐름도의 기호(A~I, ①~⑮)다.
+
+| 순서 | 파일 | 단계 | 하는 일 | 주요 함수 | 누가 부르나 |
+|---:|---|---|---|---|---|
+| 0 | `run_preprocess.py` | A~D · H | **전처리 실행 시작점.** 인자 해석, 입력 목록, 결과 폴더, 사진마다 반복, summary · review_sheet 저장 | `main` · `parse_args` · `collect_images` · `new_run_dir` · `summary_row` · `run_summary` · `write_review_sheet` | 사용자 (명령줄) |
+| 1 | `config.py` | B | 설정 JSON 읽기, `_` 주석 키 제거, `--set` 덮어쓰기, 기본 값 검사, 설정 해시 | `load_config` · `apply_override` · `check_config` · `config_hash` | run_preprocess · edit_road_mask · pipeline |
+| 2 | `image_io.py` | E · G | 영상 · 마스크 읽기/쓰기(한글 경로), 형식 검사, 0/255 이진화 | `read_image` · `read_mask` · `write_image` · `validate_image` · `validate_mask` · `to_binary_mask` | 거의 모든 파일 |
+| 3 | `mask_editor.py` | F · ⑧ | 수동 마스크 파일 찾기 · 읽기, 다각형 편집기 창(matplotlib) | `find_external_mask` · `load_external_mask` · `edit_mask_interactive` | run_preprocess · pipeline(편집기 인자로) · edit_road_mask |
+| 4 | `pipeline.py` | ①~⑮ · G | **한 장 처리의 중심.** 아래 5~14번 파일을 순서대로 부르고 metadata를 채운 뒤 저장 | `process_image` · `_choose_final_mask` · `_apply_gamma_step` · `save_result` · `make_overlay` | run_preprocess · road_detection |
+| 5 | `road_mask.py` | ①~⑦ | 자동 Road Mask 전체 묶음. 작업 영상 축소 → 6~9번 호출 → 원본 크기 복원 | `extract_road_mask` · `work_image` · `upsample_mask` | pipeline · edit_road_mask |
+| 6 | `grid_features.py` | ② ③ | Lab · gradient · texture 지도, 32px 격자 특징, 색 거리 식 | `compute_feature_maps` · `compute_grid_features` · `color_distance` | road_mask · seeds |
+| 7 | `seeds.py` | ④ | 칸마다 6개 성분 점수 → 가중 기하평균 → 시드 3~5개 선택 | `score_cells` · `select_seeds` | road_mask |
+| 8 | `region_growing.py` | ⑤ | 시드 기준값(Lab · σ_ab · 질감)으로 조건 만족 화소를 연결해 넓힘 | `grow_regions` · `acceptance_mask` | road_mask |
+| 9 | `mask_refine.py` | ⑥ | closing · opening · 구멍 채우기 · 작은 조각 제거 | `refine_mask` · `fill_holes` | road_mask · mask_validation |
+| 10 | `mask_validation.py` | ⑧ | 면적 · 최대 요소 · 구멍 · 시드 일관성 측정 → PASS/FAIL | `compute_mask_metrics` · `validate_road_mask` | pipeline |
+| 11 | `analysis_mask.py` | ⑨ | road_mask 사본을 5×5 침식, 측정 충분 여부 판단 | `make_analysis_mask` | pipeline |
+| 12 | `quality.py` | ⑩ ⑫ ⑭ | 긴 변 1024 사본에서 밝기 · 어두움 · 포화 · 선명도 · 노이즈 지표 8개 측정 | `measure_in_masks` · `measure_quality` | pipeline (Gamma 후보마다 다시 호출) |
+| 13 | `gamma.py` | ⑪ | 조건 판단 → γ 0.9 / 0.8 / 0.7 차례로 시도 → 포화 방지 | `decide_gamma` · `choose_gamma` · `apply_gamma` · `guard_triggered` | pipeline |
+| 14 | `gaussian.py` | ⑬ | 노이즈 조건 판단 · 마스크 인식 Gaussian (현재 `off`라 판단만 하고 적용 안 함) | `decide_gaussian` · `masked_gaussian` | pipeline |
+| — | `detector_adapter.py` | I | 검출기 입력 만들기(도로 영역 자르기 · 긴 변 1024), 박스를 원본 좌표로 되돌림 | `to_detector_input` · `to_original_bbox` | `road_detection/pipeline.py` (검출 실행 때만) |
+| — | `edit_road_mask.py` | — | 수동 마스크만 따로 만드는 실행기 | `main` | 사용자 (명령줄) |
+| — | `__init__.py` | — | 패키지 표시 (한 줄) | — | — |
+
+### 6-2. 호출 순서 — `run_preprocess.py` (전처리만)
+
+```text
+run_preprocess.py  main()
+ ├─ 1 run_preprocess.parse_args()                               A. 인자 해석
+ ├─ 2 config.load_config()                                      B. 설정 읽기 · --set · 검사
+ ├─ 3 run_preprocess.collect_images()                           C. 입력 목록 · rdd_test 보호
+ ├─ 4 run_preprocess.new_run_dir() → run_config.json 기록       D. 결과 폴더
+ │
+ │  ── 사진마다 반복 ──
+ ├─ 5 image_io.read_image()                                     E. 영상 읽기 (실패 → error 기록, 다음 사진)
+ ├─ 6 mask_editor.find_external_mask() · load_external_mask()   F. 수동 마스크 (옵션이 있을 때만)
+ ├─ 7 pipeline.process_image()                                  ①~⑮ 한 장 처리
+ │    ├─ image_io.validate_image()                              입력 형식 검사
+ │    ├─ road_mask.extract_road_mask()                          ①~⑦ 자동 Road Mask
+ │    │    ├─ road_mask.work_image()                            ① 긴 변 1024로 축소
+ │    │    ├─ grid_features.compute_feature_maps()              ② Lab · gradient · texture
+ │    │    ├─ grid_features.compute_grid_features()             ③ 32px 격자 특징
+ │    │    ├─ seeds.score_cells() → seeds.select_seeds()        ④ 시드 점수 · 선택
+ │    │    ├─ region_growing.grow_regions()                     ⑤ 시드별 영역 확장
+ │    │    ├─ mask_refine.refine_mask()                         ⑥ 모폴로지 정리
+ │    │    └─ road_mask.upsample_mask()                         ⑦ 원본 크기 복원
+ │    ├─ mask_validation.compute_mask_metrics()
+ │    │   → mask_validation.validate_road_mask()                ⑧ PASS / FAIL
+ │    ├─ pipeline._choose_final_mask()                          ⑧ 최종 마스크: 수동 파일 → 편집기 → 자동(PASS)
+ │    │    └─ mask_editor.edit_mask_interactive()               (--edit-failed / --review일 때만)
+ │    │    ※ 최종 마스크가 없으면 여기서 manual_required로 끝
+ │    ├─ analysis_mask.make_analysis_mask()                     ⑨ 5×5 침식
+ │    ├─ quality.measure_in_masks()                             ⑩ 초기 품질
+ │    ├─ pipeline._apply_gamma_step()                           ⑪ ⑫
+ │    │    ├─ gamma.decide_gamma()                              조건 판단 (gray_mean < 80 AND dark_ratio > 0.07)
+ │    │    ├─ gamma.choose_gamma()                              γ 0.9 → 0.8 → 0.7 시도
+ │    │    │    └─ 후보마다 gamma.apply_gamma() → quality.measure_in_masks() → gamma.guard_triggered()
+ │    │    │       (적용 → 재측정 → 포화 방지. 포화되면 그보다 강한 γ는 보지 않음)
+ │    │    └─ gamma.guard_triggered()                           최종 γ 포화 재확인 (걸리면 원본으로)
+ │    ├─ gaussian.decide_gaussian() → (gaussian.masked_gaussian())  ⑬ 현재 off
+ │    ├─ quality.measure_in_masks()                             ⑭ 최종 품질
+ │    └─ (pipeline 안에서) 크기 · 도로 밖 화소 불변 검사         ⑮ 출력 규약
+ ├─ 8 pipeline.save_result()                                    G. 사진별 저장
+ │    ├─ image_io.write_image()                                 processed_image · road_mask · analysis_mask
+ │    └─ pipeline.make_overlay()                                overlay.jpg
+ │  ── 반복 끝 ──
+ │
+ └─ 9 summary.csv · run_summary() → run_summary.json · write_review_sheet()   H. 실행 단위 저장
 ```
 
-데이터는 `data/` 아래에 넣는다 → [`data/README.md`](data/README.md). 다른 위치에 있으면 `CV_DATA_DIR` 환경변수로 지정.
+### 6-3. 다른 실행기에서의 호출 순서
 
-## 실행 (저장소 맨 위 폴더에서)
+**`edit_road_mask.py` — 수동 마스크만 만들 때**
 
-**전체 (A → B → 평가)**
-
-```bash
-python src/run_pipeline.py                     # 제공 13장 × P0/P1/P1+ × D0/D1
-python src/run_pipeline.py --dataset rdd_dev   # RDD 개발 세트 563장 — 값(ROI·기준값·파라미터) 고르기는 여기서만
-python src/run_pipeline.py --dataset rdd_test  # RDD 테스트 세트 241장 — 최종 설정이 정해진 뒤 한 번만
-python src/run_pipeline.py --dataset rdd       # RDD 804장 전체 — 정답 있음 → precision·recall·F1 (약 3분)
-python src/run_pipeline.py --dataset rdd_dev --limit 50 --no-keypoints   # 빠르게 확인
-python src/run_pipeline.py --dataset rdd_dev --roi auto   # 노면 영역(ROI): bottom_half(기본) / full / bottom_<N> / auto(사진마다 도로 시작 높이)
-python src/run_pipeline.py --dataset rdd_dev --roi auto --conditions none gamma gaussian gamma+gaussian   # 보정 단계를 골라 켜기
+```text
+edit_road_mask.py  main()
+ ├─ 1 config.load_config()
+ ├─ 2 image_io.read_image()
+ ├─ 3 시작 마스크: image_io.read_mask() (--candidate가 있을 때)
+ │                 또는 road_mask.extract_road_mask() (없을 때, 위 ①~⑦과 같음)
+ ├─ 4 mask_editor.edit_mask_interactive()        다각형으로 수정 (GUI)
+ └─ 5 image_io.write_image()                     → outputs/preprocessing/manual_masks/<이름>.png
 ```
 
-→ `outputs/pipeline/run_<시각>/` 에 `results.csv`(사진×조건×검출기), `summary.csv`(조건×검출기×그룹, F1 95% 범위 포함), `compare.csv`(기준 조건 `--reference` 대비 F1 차이와 95% 범위), `images/`(결과 박스, 정답은 초록)
-RDD는 **dev 70% / test 30%로 나눠 쓴다** (`labels/split_rdd.csv`, 기준·규칙은 [`labels/README.md`](labels/README.md)). test를 보고 값을 고치면 test가 아니게 되므로, 실험은 `rdd_dev`로 한다.
-제공 13장·촬영분은 정답 CSV가 `labels/provided.csv`, `labels/captured.csv`에 생기면 자동으로 precision·recall·F1까지 계산한다 ([`labels/README.md`](labels/README.md)).
+**`src/run_road_detection.py` — 전처리 + 검출 (전처리 폴더 밖, 이 폴더의 함수를 가져다 씀)**
 
-**전처리 조건** — `P0_reference`(보정 없음) · `P1`(gamma+gaussian) · `P1+`(gamma+clahe+unsharp+gaussian) 묶음, 또는 켤 단계를 `+`로 이어 직접 지정(`flatten` · `gamma` · `clahe` · `unsharp` · `gaussian`, `none`). 단계는 입력 순서와 상관없이 항상 flatten → gamma → clahe → unsharp → gaussian 순서로 적용, unsharp는 흐린 사진에만.
-`flatten`(조명 펴기 = 그림자 처리): 밝기(L)를 큰 closing으로 만든 "조명 배경"으로 나눠 그림자 · 밝기 차이를 고르게 함. 배경 크기는 `--flatten-ksize`(기본 61).
-실험 원칙: 이미 정한 단계는 켜고, 아직 안 정한 단계는 끈다.
-
-**평가 지표** — 지금 판정은 위 [가이드 3절](#3-측정-방법--recall--precision-in50) (in50 Recall 우선 + Precision 하한). 아래는 처음 정한 방법의 기록: 박스 단위 **F1** (`src/evaluate.py`). 정답 판정 기준 3개를 모두 기록한다:
-`iou50` IoU > 0.5 (표준, RDD 대회와 같은 정의) / `iou30` IoU > 0.3 / `in50` 후보 면적의 절반 이상이 정답 박스 안 (같은 정답 안의 추가 조각은 제외).
-기준선에서 "조건 간 차이를 오차 범위보다 크게 구분하는 기준 중 가장 엄격한 것"을 골라 이후 실험에 고정한다.
-오차 범위는 사진 단위 부트스트랩(`--bootstrap 1000`, `src/stats.py`)으로 구하고, 콘솔 마지막 표에 판정 기준별로 "의미 있는 차이" 수가 나온다.
-
-**단계별**
-
-```bash
-python src/A.py                          # A: RDD 804장 × P0/P1/P1+ 전처리 + 품질 지표 → outputs/A/run_.../
-python src/A.py --input data/provided    # A: 제공 13장
-python src/A.py --limit 10               # A: 처음 10장만
-
-python src/run_detect.py                 # B: 제공 13장 × D0/D1 검출 → outputs/detect/
-python analysis/eval_detector.py         # B: RDD 박스 단위 검출 평가
+```text
+run_road_detection.py
+ ├─ 1~6 config · run_preprocess.collect_images/new_run_dir · image_io · mask_editor   (6-2의 1~6과 같음)
+ ├─ 7 road_detection/pipeline.run_image()
+ │    ├─ pipeline.process_image()                            (6-2의 7과 같음)
+ │    │    ※ FAIL(manual_required)이고 on_fail=use_candidate면
+ │    │      후보 마스크를 수동 마스크 자리에 넣어 process_image()를 한 번 더 실행
+ │    ├─ detector_adapter.to_detector_input()                I-1 도로 영역 자르기 · 긴 변 1024
+ │    ├─ detect()  (검출 알고리즘, 수정하지 않음)             I-2 균열 · 포트홀 후보
+ │    ├─ 박스마다 road_overlap ≥ 0.5 → on_road 판정           I-3
+ │    └─ detector_adapter.to_original_bbox()                 I-4 원본 좌표로 되돌림
+ └─ 8 pipeline.save_result() + result.jpg · detections.json/csv 저장
 ```
 
-코드에서 연결:
+### 6-4. 실행 명령
 
-```python
-from paths import PROVIDED_DIR, imread
-from preprocess import preprocess
-from detect import detect
-
-img = imread(PROVIDED_DIR / "United_States_005996.jpg")
-fixed = preprocess(img, {"condition": "P1+"})   # A: 노면 영역 + 1024 + 보정, BGR
-dets = detect(fixed)                              # B: [{bbox, type, area, elong, ...}]
+```powershell
+# 전처리만 (저장소 맨 위 폴더)
+py src/preprocessing/run_preprocess.py --dataset rdd_dev --limit 20
+py src/preprocessing/run_preprocess.py --input <사진 또는 폴더> --set gamma.mode=off
+# 수동 마스크 만들기 → 다시 처리
+py src/preprocessing/edit_road_mask.py --image <사진>
+py src/preprocessing/run_preprocess.py --input <사진> --manual-mask-dir outputs/preprocessing/manual_masks
+# 전처리 → 검출 전체
+py src/run_road_detection.py --dataset rdd_dev --limit 20
 ```
-
-## 규칙
-
-- **경로는 `src/paths.py`에서만** 가져온다. 코드에 개인 경로(`C:\Users\...`, `/Users/...`)를 쓰지 않는다
-- 이미지 읽기·쓰기는 `paths.imread` / `paths.imwrite` (Windows 한글 경로 대응)
-- 실행 결과는 `outputs/`에 쌓이고, 팀과 공유할 것만 `results/<이름_데이터_날짜>/`로 옮겨 올린다
-- 줄바꿈은 `.gitattributes`로 LF 통일 (Windows에서도 diff가 깨지지 않게)
