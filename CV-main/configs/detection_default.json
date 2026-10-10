@@ -1,0 +1,13 @@
+{
+  "description": "기본 검출 설정 — D1 + 양쪽 확인(v). opencv-contrib 없이 동작한다. 균열: Black-hat(작은 커널) → 이중 임계값 → 양쪽 확인, 포트홀: Adaptive Threshold. 검출 알고리즘은 src/detect.py 그대로.",
+  "detector": "D1v",
+  "valley_ratio": 0.35,
+  "set": {},
+  "integration": {
+    "input_mode": "crop_to_road",
+    "crop_margin": 16,
+    "long_side": 1024,
+    "min_road_overlap": 0.5,
+    "on_fail": "use_candidate"
+  }
+}

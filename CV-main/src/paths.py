@@ -4,7 +4,6 @@
 - 경로는 저장소 기준 상대 위치 → Windows·macOS 어디서 clone해도 그대로 동작
 - 데이터·출력 위치가 다르면 환경변수로 덮어쓴다 (코드 수정 불필요)
     CV_DATA_DIR   기본 <저장소>/data
-    CV_OUTPUT_DIR 기본 <저장소>/outputs
 - 이미지 읽기·쓰기는 한글 경로를 위해 np.fromfile / imencode 사용 (Windows의 cv2.imread는 한글 경로 실패)
 """
 import os
@@ -15,9 +14,7 @@ import numpy as np
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DATA_DIR = Path(os.environ.get("CV_DATA_DIR", REPO_ROOT / "data"))
-OUTPUT_DIR = Path(os.environ.get("CV_OUTPUT_DIR", REPO_ROOT / "outputs"))
-RESULTS_DIR = REPO_ROOT / "results"          # 팀이 공유할 결과 (git에 올림)
-LABELS_DIR = REPO_ROOT / "labels"            # 정답 박스 CSV — provided.csv, captured.csv (git에 올림)
+LABELS_DIR = REPO_ROOT / "labels"            # RDD 분할 CSV (rdd_test 보호에 사용)
 
 PROVIDED_DIR = DATA_DIR / "provided"          # 제공 13장
 CAPTURED_DIR = DATA_DIR / "captured"          # 직접 촬영분
