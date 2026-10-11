@@ -35,6 +35,7 @@ B 위에 얹는 보정 (--extra, 기본 없음 = B 그대로):
       --calibrate --config-name b_lc11 --note "B + 막대 닫힘 11"
   python analysis/run_road_pipeline.py --cache 폴더 --det-set guided_filter='{"r":4,"eps":"var","eps_scale":2.0}' --calibrate --config-name b_gf3
   python analysis/compare_runs.py B=<B 실행> 새것=<이 실행> --split
+인공 흐림 평가셋: --degrade '{"kind": "gauss", "k": 3.5}' — 원본 사진에 흐림을 걸고 시작 (analysis/blur_degrade.py · 캐시도 흐림마다 따로)
 rdd_test는 --allow-rdd-test를 줄 때만 (EVALUATION.md 7절 — 쓰면 experiments.md에 기록).
 """
 import argparse
@@ -69,6 +70,8 @@ from data import list_images, load_gt, load_viewpoints  # noqa: E402
 from evaluate import CRITERIA, KINDS, evaluate  # noqa: E402
 from paths import OUTPUT_DIR, imread  # noqa: E402
 from run_pipeline import git_version, log_run, new_run_dir, parse_overrides  # noqa: E402
+sys.path.insert(0, str(ROOT / "analysis"))
+from blur_degrade import degrade  # noqa: E402
 
 PRE_CFG = MAIN / "configs" / "preprocessing.json"
 DET_CFG = MAIN / "configs" / "detection_p2bd.json"
@@ -77,7 +80,7 @@ CONDITION, DETECTOR = "v1.1_road", "D1hv"      # runs.csv의 조건 · 검출기
 KEEP = 200_000                                  # 강한 기준 맞추기: 사진마다 위쪽 중심선 점수만 보관
 
 
-def prepare(path, pre_cfg, det, cache):
+def prepare(path, pre_cfg, det, cache, degrade_spec=None):
     """팀원 전처리 + 연결 → (기록, 검출기 입력 영상, 검출기 마스크, geometry). 전처리 실패면 영상 None.
     road_detection.pipeline.run_image · detect_on_road와 같은 순서 (검출 직전까지)."""
     if cache and (cache / f"{path.stem}.json").exists():
@@ -86,7 +89,7 @@ def prepare(path, pre_cfg, det, cache):
             return meta, None, None, None
         return (meta, cv2.imread(str(cache / f"{path.stem}_img.png"), cv2.IMREAD_COLOR),
                 cv2.imread(str(cache / f"{path.stem}_mask.png"), cv2.IMREAD_GRAYSCALE), meta["geometry"])
-    image = imread(path)
+    image = degrade(imread(path), degrade_spec, path.name)
     pre = process_image(image, pre_cfg, image_id=path.name)
     unverified = False
     if pre.status == MANUAL_REQUIRED and det["integration"]["on_fail"] == "use_candidate" and pre.auto_mask is not None \
@@ -201,6 +204,7 @@ def main():
     p.add_argument("--det-set", nargs="+", metavar="키=값", help="검출 설정 위에 덮어쓸 detect 설정 (예: guided_filter=…)")
     p.add_argument("--extra", default="{}", help="B 위에 얹는 보정 (JSON, 위 설명)")
     p.add_argument("--calibrate", action="store_true", help="강한 기준을 B의 강한 흔적 총수에 맞춤 (--cache 필요)")
+    p.add_argument("--degrade", default="", help="인공 흐림 (JSON, analysis/blur_degrade.py) — 원본에 걸고 시작")
     p.add_argument("--cache", type=Path, help="전처리 · 연결 결과 저장 폴더 (있으면 다시 씀 — 같은 전처리 설정일 때만)")
     p.add_argument("--config-name", default="b_road", help="runs.csv의 설정 칸 (설정을 바꾸면 이름도 바꿀 것)")
     p.add_argument("--note", default="")
@@ -217,6 +221,7 @@ def main():
     base_cfg = {**DEFAULT_CFG, **det["detect_cfg"]}
     cfg = {**base_cfg, **parse_overrides(a.det_set)}
     extra = json.loads(a.extra)
+    deg = json.loads(a.degrade) if a.degrade else None
     name, _, images = list_images(a.dataset)
     images = images[:a.limit] if a.limit else images
     gt_of, vps = load_gt(a.dataset, name), load_viewpoints(a.dataset)
@@ -225,6 +230,8 @@ def main():
     if a.cache:
         a.cache.mkdir(parents=True, exist_ok=True)
         stamp = {"preprocessing_hash": config_hash(pre_cfg), "integration": det["integration"]}
+        if deg:
+            stamp["degrade"] = deg
         sp = a.cache / "_cache.json"
         if sp.exists() and json.loads(sp.read_text()) != stamp:
             raise SystemExit(f"error:{a.cache}는 다른 전처리 · 연결 설정의 캐시")
@@ -241,13 +248,13 @@ def main():
         else:
             n_ref = 0
             for path in images:
-                _, img, _, _ = prepare(path, pre_cfg, det, a.cache)
+                _, img, _, _ = prepare(path, pre_cfg, det, a.cache, deg)
                 if img is not None:
                     n_ref += int((center_map(img, base_cfg) >= base_cfg["line_hi_abs"]).sum())
             ref_path.write_text(json.dumps({"n_ref": n_ref, "hi": base_cfg["line_hi_abs"]}))
         vals = []
         for i, path in enumerate(images, 1):
-            meta, img, mask, geo = prepare(path, pre_cfg, det, a.cache)
+            meta, img, mask, geo = prepare(path, pre_cfg, det, a.cache, deg)
             if img is None:
                 continue
             img, _ = apply_extra(img, mask, extra, runtime_tags(path.name, img, mask, geo, extra, tags_of))
@@ -267,7 +274,7 @@ def main():
     rows, dets_all = [], {}
     for i, path in enumerate(images, 1):
         t0 = time.perf_counter()
-        meta, img, mask, geo = prepare(path, pre_cfg, det, a.cache)
+        meta, img, mask, geo = prepare(path, pre_cfg, det, a.cache, deg)
         dets, applied = [], False
         if img is not None:
             img, applied = apply_extra(img, mask, extra, runtime_tags(path.name, img, mask, geo, extra, tags_of))
@@ -301,7 +308,7 @@ def main():
     json.dump(dets_all, open(run_dir / "detections.json", "w"))
     json.dump({"dataset": a.dataset, "limit": a.limit, "preprocessing_config": str(pre_path.relative_to(ROOT)),
                "preprocessing_hash": config_hash(pre_cfg), "detection_config": str(det_path.relative_to(ROOT)),
-               "det_set": a.det_set, "extra": extra, "line_hi_abs": hi_used, "calibrated": a.calibrate,
+               "det_set": a.det_set, "extra": extra, "degrade": deg, "line_hi_abs": hi_used, "calibrated": a.calibrate,
                "code": git_version(), "note": a.note}, open(run_dir / "run_config.json", "w"), ensure_ascii=False, indent=2)
     n_unv = sum(r["unverified_mask"] for r in rows)
     print(f"상태: { {s: sum(r['status'] == s for r in rows) for s in dict.fromkeys(r['status'] for r in rows)} }"
