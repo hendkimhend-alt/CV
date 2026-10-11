@@ -16,6 +16,10 @@ B 위에 얹는 보정 (--extra, 기본 없음 = B 그대로):
   {"clahe": {"clip": 2.0, "tile": 8, "apply_to": "all"}}     CLAHE (Lab L 채널, apply_to: all · local_illumination 등 그룹)
   {"gamma": {"mode": "auto", "min": 0.5, "max": 2.0}}        사진마다 감마: 노면 회색 가운데값 m이 128이 되는 γ = ln 0.5 ÷ ln(m/255)
                                                              (auto_dark = γ ≤ 1만, 어두운 사진만 밝게 · fixed = "value")
+  {"harris_adapt": {"win": 31, "thr": 2.0, "strong": {…질감 처리…}}}
+                                                             거친 곳만 더 세게: Harris 코너 세기(수업 3-2)를 창(win)으로 평균 내 사진 노면의 중앙값으로 나눈 값이
+                                                             thr 이상인 노면은 "strong" 질감 처리 결과로 바꿈 (판단은 보정 전 입력으로 · thr는 정답 없이
+                                                             노면 분포의 분위수로 정함 — analysis/harris_density.py)
   여러 개를 함께 쓰면 "order"의 순서로 (기본 감마 → CLAHE → 가우시안 → 막대 닫힘 → 언샤프),
   예: {"line_close": …, "gaussian": …, "order": ["line_close", "gaussian"]} · 모든 단계에 "apply_to" 가능 (기본 all)
   보정은 Hessian 점수 크기를 바꾸므로 --calibrate로 강한 기준을 다시 맞춘다:
@@ -136,6 +140,13 @@ def apply_extra(img, mask, extra, tags):
             closed = [cv2.morphologyEx(out, cv2.MORPH_CLOSE, _line_kernel(c["length"], 180.0 * i / c["angles"]),
                                        borderType=cv2.BORDER_REPLICATE) for i in range(c["angles"])]
             out = np.min(np.stack(closed), axis=0)
+        elif step == "harris_adapt":
+            resp = cv2.cornerHarris(cv2.cvtColor(img, cv2.COLOR_BGR2GRAY).astype(np.float32), 2, 3, 0.04)
+            energy = cv2.boxFilter(np.maximum(resp, 0), -1, (c["win"], c["win"]))
+            energy /= max(float(np.median(energy[mask > 0])) if np.any(mask > 0) else 1.0, 1e-9)
+            rough = (energy >= c["thr"]) & (mask > 0)
+            strong, _ = apply_extra(img, mask, c["strong"], tags)
+            out = np.where(rough[..., None], strong, out)
         elif step == "unsharp":
             src = out.astype(np.float32)
             blur = cv2.GaussianBlur(src, (0, 0), c["sigma"], borderType=cv2.BORDER_REFLECT_101)

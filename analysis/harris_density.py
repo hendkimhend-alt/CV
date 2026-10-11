@@ -50,7 +50,7 @@ def main():
         if f["type"] == "crack" and f["kind"] == "E":
             fakes.setdefault(f["image"], []).append([float(f[k]) for k in ("x1", "y1", "x2", "y2")])
     rng = np.random.default_rng(20261012)
-    sample, diag = [], {"질감 가짜": [], "균열 정답 (거북등 제외)": [], "거북등 정답": []}
+    sample, esample, diag = [], [], {"질감 가짜": [], "균열 정답 (거북등 제외)": [], "거북등 정답": []}
     for path in images:
         meta, img, mask, geo = R.prepare(path, pre_cfg, det, a.cache)
         if img is None:
@@ -58,6 +58,10 @@ def main():
         D = density(img)
         v = D[mask > 0]
         sample.append(rng.choice(v, min(2000, v.size), replace=False))
+        resp = cv2.cornerHarris(cv2.cvtColor(img, cv2.COLOR_BGR2GRAY).astype(np.float32), 2, 3, 0.04)
+        e = cv2.boxFilter(np.maximum(resp, 0), -1, (WIN, WIN))
+        e = e[mask > 0] / max(float(np.median(e[mask > 0])), 1e-9)
+        esample.append(rng.choice(e, min(2000, e.size), replace=False))
         ann = RDD_DIR / "ann" / f"{path.name}.json"
         objs = json.loads(ann.read_text(encoding="utf-8"))["objects"] if ann.exists() else []
         boxes = []
@@ -74,6 +78,9 @@ def main():
             if x2 > x1 and y2 > y1:
                 diag[k].append(float(D[y1:y2, x1:x2].mean()))
     allv = np.concatenate(sample)
+    ev = np.concatenate(esample)
+    print("노면 코너 세기 (사진 노면 중앙값 대비) 분위수 — harris_adapt thr 후보, 정답 안 봄:",
+          {p: round(float(np.quantile(ev, p / 100)), 3) for p in (50, 75, 90)})
     q = {p: float(np.quantile(allv, p / 100)) for p in (25, 50, 75, 90)}
     print("노면 코너 밀도 분위수 (기준값 후보, 정답 안 봄):", {k: round(v, 4) for k, v in q.items()})
     for k, v in diag.items():
