@@ -13,6 +13,8 @@ B 위에 얹는 보정 (--extra, 기본 없음 = B 그대로):
   {"line_close": {"length": 11, "angles": 12}}              막대 닫힘: 여러 방향 막대로 닫힌 결과의 최솟값
                                                              → 막대보다 짧은 어두운 점 · 줄(골재)은 메우고, 긴 어두운 선(균열)은 남김
   {"unsharp": {"amount": 1.5, "sigma": 1.0, "apply_to": "blur"}}   언샤프 (apply_to: all · blur — 흐림 = labels/split_rdd.csv 그룹, 사진만으로 정한 분류)
+  "apply_to": "blur_rt" + "blur_thr": 50                     흐림을 파이프라인이 직접 판단: 노면 마스크 안 선명도(Laplacian 분산,
+                                                             사진 긴 변 1024 척도) < blur_thr (1차 흐림 기준 50 — analysis/blur_judge.py)
   {"clahe": {"clip": 2.0, "tile": 8, "apply_to": "all"}}     CLAHE (Lab L 채널, apply_to: all · local_illumination 등 그룹)
   {"gamma": {"mode": "auto", "min": 0.5, "max": 2.0}}        사진마다 감마: 노면 회색 가운데값 m이 128이 되는 γ = ln 0.5 ÷ ln(m/255)
                                                              (auto_dark = γ ≤ 1만, 어두운 사진만 밝게 · fixed = "value")
@@ -159,6 +161,26 @@ def apply_extra(img, mask, extra, tags):
     return np.where((mask > 0)[..., None], out, img).astype(np.uint8), True
 
 
+def sharpness(img, mask, geo):
+    """노면 마스크(5×5로 깎음) 안 회색의 Laplacian 분산 — 사진 전체 긴 변을 1024로 맞춘 척도 (팀원 품질 측정 · 1차 흐림 분류와 같은 척도)."""
+    f = (1024.0 / max(geo["original_width"], geo["original_height"])) / geo["scale_x"]
+    size = (max(1, round(img.shape[1] * f)), max(1, round(img.shape[0] * f)))
+    g = cv2.resize(cv2.cvtColor(img, cv2.COLOR_BGR2GRAY), size, interpolation=cv2.INTER_AREA if f < 1 else cv2.INTER_LINEAR)
+    m = cv2.erode((cv2.resize(mask, size, interpolation=cv2.INTER_NEAREST) > 0).astype(np.uint8), np.ones((5, 5), np.uint8)) > 0
+    lap = cv2.Laplacian(g, cv2.CV_64F, ksize=1)
+    return float(lap[m].var()) if m.sum() > 100 else float(lap.var())
+
+
+def runtime_tags(name, img, mask, geo, extra, tags_of):
+    """사진의 그룹 태그 + 파이프라인이 직접 판단한 태그 (blur_rt: 노면 선명도 < blur_thr)."""
+    tags = set(tags_of(name))
+    if any(isinstance(c, dict) and c.get("apply_to") == "blur_rt" for c in extra.values()):
+        thr = next(c.get("blur_thr", 50.0) for c in extra.values() if isinstance(c, dict) and c.get("apply_to") == "blur_rt")
+        if sharpness(img, mask, geo) < thr:
+            tags.add("blur_rt")
+    return tags
+
+
 def center_map(img, cfg):
     """강한 기준과 비교하는 바로 그 중심선 점수 (detect.line_trace · analysis/calibrate.py와 같음)."""
     score, angle = line_score(find_input(_to_gray(img), cfg), cfg["line_sigmas"], cfg.get("line_scale_combine", "max"))
@@ -225,10 +247,10 @@ def main():
             ref_path.write_text(json.dumps({"n_ref": n_ref, "hi": base_cfg["line_hi_abs"]}))
         vals = []
         for i, path in enumerate(images, 1):
-            meta, img, mask, _ = prepare(path, pre_cfg, det, a.cache)
+            meta, img, mask, geo = prepare(path, pre_cfg, det, a.cache)
             if img is None:
                 continue
-            img, _ = apply_extra(img, mask, extra, tags_of(path.name))
+            img, _ = apply_extra(img, mask, extra, runtime_tags(path.name, img, mask, geo, extra, tags_of))
             c = center_map(img, cfg)
             vals.append(np.sort(c[c > 0])[-KEEP:])
             if i % 100 == 0:
@@ -248,7 +270,7 @@ def main():
         meta, img, mask, geo = prepare(path, pre_cfg, det, a.cache)
         dets, applied = [], False
         if img is not None:
-            img, applied = apply_extra(img, mask, extra, tags_of(path.name))
+            img, applied = apply_extra(img, mask, extra, runtime_tags(path.name, img, mask, geo, extra, tags_of))
             for d in detect(img, cfg):
                 if road_overlap(mask, d["bbox"]) >= integ["min_road_overlap"]:
                     x, y, w, h = to_original_bbox(d["bbox"], geo)
