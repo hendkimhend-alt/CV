@@ -12,6 +12,12 @@
 공통: 정답 하나에 TP는 최대 하나 (겹침이 큰 쌍부터 짝짓기).
       iou50 · iou30은 표준대로 짝을 못 찾은 후보(중복 조각 포함)는 모두 FP.
       recall = TP / 정답 수, precision = TP / (TP + FP), F1 = 둘의 조화평균
+보고용 in50 Precision (10/10 고정 — EVALUATION.md 2절, prf_in50()):
+      Recall은 정답 쪽에서 (맞힌 정답 ÷ 정답 수), Precision은 후보 쪽에서 (정답 박스 안 후보 ÷ 전체 후보) 센다.
+      위 precision(TP ÷ (TP + FP))은 맞힘은 '정답 수', 가짜는 '조각 수'로 세서 단위가 달랐다
+      (진짜 균열이 조각 6개로 나오면 1개, 가짜가 조각 4개로 나오면 4개) → precision_hit으로 계속 기록만 한다.
+      균열 논문의 픽셀 P · R(검출 쪽 · 정답 쪽에서 각각 셈)을 박스로 옮긴 것.
+      정답 안에서 잘게 쪼갤수록 Precision이 오를 수 있으므로 후보/장 · 맞힌 정답당 조각 수를 같이 보고한다.
 좌표는 둘 다 같은 좌표계(전처리 후 노면 영역)여야 한다 → transform_gt()로 맞춘다.
 ROI 밖으로 잘린 정답(노면 영역과 전혀 안 겹침)은 transform_gt()에서 빠지지만, 검출기가 볼 수 없었을 뿐
 손상은 있었으므로 **놓침(FN)으로 센다** → count_cut()으로 세어 evaluate(cut=)에 넘긴다.
@@ -23,6 +29,8 @@ ROI 밖으로 잘린 정답(노면 영역과 전혀 안 겹침)은 transform_gt(
 - 구분력 = 정답 박스에 같은 종류 후보가 나온 비율(TPR) − 대조 박스에 나온 비율(FPR)
   → 통계의 Youden's J(민감도 + 특이도 − 1)와 같은 형태. 0 = 손상과 옆 노면을 못 가림
 """
+
+import numpy as np
 
 KINDS = ("crack", "pothole")
 CRITERIA = ("iou50", "iou30", "in50")
@@ -127,6 +135,21 @@ def evaluate(detections, gt_boxes, cut=None):
             r[c] = {"tp": tp, "fp": fp, "fn": fn + n_cut}
         res[kind] = r
     return res
+
+
+def prf_in50(tp, fp, fn, n_det):
+    """보고용 in50 (precision, recall, F1) — tp · fp · fn은 in50 값, n_det = 후보 수.
+    precision = (후보 수 − 가짜) ÷ 후보 수 = 정답 박스 안 후보 비율, recall = tp ÷ (tp + fn).
+    숫자면 분모 0 → None, numpy 배열(부트스트랩)이면 nan."""
+    if isinstance(tp, (np.ndarray, np.generic)):
+        with np.errstate(divide="ignore", invalid="ignore"):
+            p, r = (n_det - fp) / n_det, tp / (tp + fn)
+            return p, r, np.where(p + r > 0, 2 * p * r / (p + r), np.where(np.isnan(p + r), np.nan, 0.0))
+    p = (n_det - fp) / n_det if n_det else None
+    r = tp / (tp + fn) if tp + fn else None
+    if p is None or r is None:
+        return p, r, None
+    return p, r, (2 * p * r / (p + r) if p + r else 0.0)
 
 
 def prf(tp, fp, fn):

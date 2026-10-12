@@ -3,6 +3,7 @@
 
 같은 데이터 세트를 돌린 실행끼리만 비교한다 (사진 이름으로 짝지음). 첫 번째 실행이 기준.
 판정 기준은 in50 (src/evaluate.py) — run_pipeline.py의 summary.csv · results/runs.csv와 같은 계산.
+Precision = 정답 박스 안 후보 ÷ 전체 후보 (evaluate.prf_in50, 10/10 고정), Recall = 맞힌 정답 ÷ 정답 수.
 사진을 다시 뽑아(복원 추출, 1000번) 두 실행의 차이를 매번 다시 재고, 그 차이의 가운데 95%가
 0을 포함하지 않으면 ✱ (= 우연으로 보기 어려운 차이).
 
@@ -13,6 +14,7 @@
   실행 안에 조건 × 검출기가 여러 개면 --pick 조건/검출기 로 고른다 (예: --pick none/D1hv)
   --split: 개발 세트를 튜닝 394 · 검증 169로 나눠서 (labels/split_rdd_dev.csv) — 여러 값 중 고를 때 튜닝에서 고르고
            검증에서 확인 (10/8 실험과 같은 계산: 2000번 · seed 20261008)
+  --split-groups: --split에 더해 튜닝 · 검증 안의 품질 그룹(흐림 · 그림자)도 — 그룹만 노리는 보정용
 """
 import argparse
 import csv
@@ -24,6 +26,7 @@ import numpy as np
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 from paths import OUTPUT_DIR  # noqa: E402
+from evaluate import prf_in50  # noqa: E402
 from stats import row_tags  # noqa: E402
 
 GROUPS = ("all", "blur", "local_illumination", "normal")
@@ -45,9 +48,9 @@ def load(arg, pick):
 
 
 def stat(c):
-    tp, fp, fn = c[..., 0], c[..., 1], c[..., 2]
-    with np.errstate(invalid="ignore", divide="ignore"):
-        return tp / (tp + fn), tp / (tp + fp), 2 * tp / (2 * tp + fp + fn)
+    """c[..., (tp, fp, fn, 후보 수)] → (Recall, Precision, F1)"""
+    p, r, f1 = prf_in50(c[..., 0], c[..., 1], c[..., 2], c[..., 3])
+    return r, p, f1
 
 
 def main():
@@ -56,9 +59,11 @@ def main():
     p.add_argument("--kind", default="crack", choices=("crack", "pothole"))
     p.add_argument("--pick", help="조건/검출기 (실행 안에 여러 개일 때)")
     p.add_argument("--split", action="store_true", help="그룹 대신 튜닝 · 검증으로 나눠 비교 (개발 세트 실행만)")
+    p.add_argument("--split-groups", action="store_true", help="--split + 튜닝 · 검증 안의 흐림 · 그림자 그룹")
     p.add_argument("--n-boot", type=int, help="부트스트랩 횟수 (기본 1000, --split이면 2000)")
     p.add_argument("--seed", type=int, help="기본 20261006, --split이면 20261008")
     a = p.parse_args()
+    a.split = a.split or a.split_groups
     n_boot = a.n_boot or (2000 if a.split else 1000)
     seed = a.seed or (20261008 if a.split else 20261006)
     if len(a.runs) < 2:
@@ -74,8 +79,9 @@ def main():
         missing = [im for im in imgs if im not in part]
         if missing:
             raise SystemExit(f"error:--split은 rdd_dev 실행만 — 분할에 없는 사진 {len(missing)}장 (예: {missing[0]})")
-        tags = {im: [part[im]] for im in imgs}
-        groups = ("tune", "val")
+        tags = {im: [part[im]] + [f"{part[im]}:{g}" for g in row_tags(base[im])[1:]] for im in imgs}
+        groups = ("tune", "val") + (("tune:blur", "val:blur", "tune:local_illumination", "val:local_illumination")
+                                    if a.split_groups else ())
     else:
         tags = {im: row_tags(base[im]) for im in imgs}
         groups = GROUPS
@@ -90,14 +96,15 @@ def main():
         if a.split:                                 # 묶음마다 새로 (10/8 튜닝 · 검증 비교와 같은 계산)
             rng = np.random.default_rng(seed)
         idx = rng.integers(0, len(gi), size=(n_boot, len(gi)))
-        cnt = {n: np.array([[float(d[im][f"{k}_in50_{x}"]) for x in ("tp", "fp", "fn")] for im in gi]) for n, d in runs}
+        cols = [f"{k}_in50_{x}" for x in ("tp", "fp", "fn")] + [f"n_{k}"]
+        cnt = {n: np.array([[float(d[im][c]) for c in cols] for im in gi]) for n, d in runs}
         bb = stat(cnt[base_name][idx].sum(1))
         b0 = stat(cnt[base_name].sum(0))
         print(f"\n[{group} · 사진 {len(gi)}장]")
         for n, _ in runs:
             R, P, F = stat(cnt[n].sum(0))
             line = (f"  {n:24} R {R:.3f}  P {P:.3f}  F1 {F:.3f}  맞힘 {cnt[n][:, 0].sum():4.0f}"
-                    f"  가짜/장 {cnt[n][:, 1].sum() / len(gi):5.1f}")
+                    f"  후보/장 {cnt[n][:, 3].sum() / len(gi):5.1f}  가짜/장 {cnt[n][:, 1].sum() / len(gi):5.1f}")
             if n != base_name:
                 b = stat(cnt[n][idx].sum(1))
                 for lab, j, pt in (("R", 0, R), ("P", 1, P)):

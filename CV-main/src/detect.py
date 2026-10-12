@@ -40,6 +40,7 @@ DEFAULT_CFG = {
     "crack_block": 31,           # adaptive 모드 전용 (홀수)
     "crack_C": -5,               # adaptive 모드 전용
     "crack_close_ksize": 3,      # 5는 그림자 조각까지 이어 붙임
+    "crack_thin": False,         # [공정 비교용, 10/12] True면 Black-hat 흔적을 1px로 얇게 (잇기 뒤) — Hessian 경로와 같은 1px 줄기로 길이 · 거르기
 
     # D1 포트홀 branch
     "pothole_block": 101,        # 큰 블록 → 덩어리 단위로 어두운 곳 (홀수)
@@ -195,6 +196,8 @@ def _crack_mask(gray, cfg, with_angle=False):
     binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, _kernel(cfg["crack_close_ksize"]))
     if cfg["link_dist"] > 0:
         binary = link_fragments(binary, cfg)
+    if cfg.get("crack_thin", False):
+        binary = cv2.ximgproc.thinning(binary)
     return (binary, bh, hi, None) if with_angle else (binary, bh, hi)
 
 

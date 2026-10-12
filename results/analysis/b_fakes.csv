@@ -1,0 +1,151 @@
+﻿id,image,type,x1,y1,x2,y2,gt_overlap,n_fake_in_image,kind,kind_name,labeler
+1,China_Drone_000035.jpg,crack,223,119,230,184,0.0,55,C,차선 · 노면 페인트,Claude 1차
+2,China_Drone_000035.jpg,crack,412,471,417,496,0.0,55,C,차선 · 노면 페인트,Claude 1차
+3,China_Drone_000035.jpg,crack,264,488,266,512,0.0,55,E,노면 질감,Claude 1차
+4,China_Drone_000230.jpg,crack,62,68,79,86,0.0,17,E,노면 질감,Claude 1차
+5,China_Drone_000230.jpg,crack,111,296,130,314,0.0,17,E,노면 질감,Claude 1차
+6,China_Drone_000525.jpg,crack,183,46,198,71,0.0,58,E,노면 질감,Claude 1차
+7,China_Drone_000525.jpg,crack,456,272,461,300,0.0,58,D,그림자 경계,Claude 1차
+8,China_Drone_000525.jpg,crack,103,322,110,352,0.0,58,E,노면 질감,Claude 1차
+9,China_Drone_000525.jpg,crack,142,418,152,440,0.419,58,I,정답 박스에 걸침,Claude 1차
+10,China_Drone_000525.jpg,crack,2,470,12,502,0.0,58,E,노면 질감,Claude 1차
+11,China_Drone_000525.jpg,crack,26,470,32,494,0.0,58,E,노면 질감,Claude 1차
+12,China_Drone_000680.jpg,crack,423,485,428,508,0.0,2,C,차선 · 노면 페인트,Claude 1차
+13,China_Drone_001824.jpg,crack,381,4,404,14,0.0,29,E,노면 질감,Claude 1차
+14,China_MotorBike_000083.jpg,crack,460,330,474,352,0.0,10,E,노면 질감,Claude 1차
+15,China_MotorBike_000255.jpg,crack,440,446,450,474,0.0,8,E,노면 질감,Claude 1차
+16,China_MotorBike_000607.jpg,crack,81,487,98,510,0.0,9,E,노면 질감,Claude 1차
+17,China_MotorBike_000815.jpg,crack,283,368,290,396,0.0,10,E,노면 질감,Claude 1차
+18,China_MotorBike_000815.jpg,crack,321,433,354,452,0.0,10,F,이음매 · 패치 · 포장 경계,Claude 1차
+19,China_MotorBike_001014.jpg,crack,327,458,345,512,0.0,12,F,이음매 · 패치 · 포장 경계,Claude 1차
+20,China_MotorBike_001339.jpg,crack,139,353,154,374,0.0,9,E,노면 질감,Claude 1차
+21,China_MotorBike_001497.jpg,crack,400,480,420,508,0.0,10,E,노면 질감,Claude 1차
+22,Czech_000947.jpg,crack,231,518,252,522,0.0,4,B,보닛 · 차체 · 유리 반사,Claude 1차
+23,Czech_001327.jpg,crack,9,442,45,448,0.0,8,A,노면 밖,Claude 1차
+24,Czech_001517.jpg,crack,353,510,397,520,0.0,53,B,보닛 · 차체 · 유리 반사,Claude 1차
+25,Czech_001517.jpg,crack,519,523,600,539,0.0,53,B,보닛 · 차체 · 유리 반사,Claude 1차
+26,Czech_001786.jpg,crack,76,403,104,408,0.0,37,E,노면 질감,Claude 1차
+27,Czech_002472.jpg,crack,221,388,245,412,0.0,15,H,진짜 균열처럼 보임 (정답 없음),Claude 1차
+28,Czech_002670.jpg,pothole,132,469,183,488,0.0,6,C,차선 · 노면 페인트,Claude 1차
+29,Czech_002769.jpg,crack,38,431,68,437,0.0,13,E,노면 질감,Claude 1차
+30,Czech_003391.jpg,crack,151,517,204,524,0.0,3,B,보닛 · 차체 · 유리 반사,Claude 1차
+31,Czech_003498.jpg,crack,421,509,464,517,0.0,8,B,보닛 · 차체 · 유리 반사,Claude 1차
+32,India_001785.jpg,crack,292,558,335,569,0.0,2,H,진짜 균열처럼 보임 (정답 없음),Claude 1차
+33,India_002085.jpg,crack,318,633,356,639,0.0,2,B,보닛 · 차체 · 유리 반사,Claude 1차
+34,India_002610.jpg,pothole,0,637,63,674,0.0,3,D,그림자 경계,Claude 1차
+35,India_003595.jpg,pothole,240,648,264,686,0.0,2,B,보닛 · 차체 · 유리 반사,Claude 1차
+36,India_003806.jpg,crack,443,362,536,382,0.414,2,I,정답 박스에 걸침,Claude 1차
+37,India_006808.jpg,crack,288,396,324,397,0.0,5,H,진짜 균열처럼 보임 (정답 없음),Claude 1차
+38,India_006808.jpg,pothole,265,584,312,614,0.0,5,B,보닛 · 차체 · 유리 반사,Claude 1차
+39,Japan_000121.jpg,crack,449,458,480,471,0.0,9,A,노면 밖,Claude 1차
+40,Japan_000400.jpg,crack,582,216,599,240,0.295,68,I,정답 박스에 걸침,Claude 1차
+41,Japan_000400.jpg,crack,244,430,254,457,0.0,68,E,노면 질감,Claude 1차
+42,Japan_000400.jpg,crack,108,453,117,492,0.0,68,E,노면 질감,Claude 1차
+43,Japan_000400.jpg,crack,534,478,558,520,0.0,68,E,노면 질감,Claude 1차
+44,Japan_000474.jpg,crack,381,439,404,460,0.0,73,E,노면 질감,Claude 1차
+45,Japan_000474.jpg,crack,425,517,476,600,0.0,73,A,노면 밖,Claude 1차
+46,Japan_000474.jpg,crack,332,538,339,581,0.0,73,E,노면 질감,Claude 1차
+47,Japan_000474.jpg,crack,185,560,190,600,0.0,73,E,노면 질감,Claude 1차
+48,Japan_000881.jpg,crack,480,529,508,533,0.0,28,D,그림자 경계,Claude 1차
+49,Japan_000881.jpg,crack,497,591,524,600,0.0,28,E,노면 질감,Claude 1차
+50,Japan_001063.jpg,crack,267,414,295,421,0.0,21,F,이음매 · 패치 · 포장 경계,Claude 1차
+51,Japan_001625.jpg,crack,414,571,445,599,0.0,3,H,진짜 균열처럼 보임 (정답 없음),Claude 1차
+52,Japan_001855.jpg,pothole,537,544,580,584,0.0,34,C,차선 · 노면 페인트,Claude 1차
+53,Japan_002104.jpg,crack,190,341,281,353,0.0,12,H,진짜 균열처럼 보임 (정답 없음),Claude 1차
+54,Japan_002128.jpg,crack,330,421,332,448,0.0,92,E,노면 질감,Claude 1차
+55,Japan_002357.jpg,crack,148,452,197,464,0.0,22,J,판별 어려움,Claude 1차
+56,Japan_002472.jpg,crack,374,364,439,436,0.0,12,C,차선 · 노면 페인트,Claude 1차
+57,Japan_002561.jpg,crack,274,308,282,373,0.0,14,F,이음매 · 패치 · 포장 경계,Claude 1차
+58,Japan_003021.jpg,crack,136,338,165,344,0.0,12,H,진짜 균열처럼 보임 (정답 없음),Claude 1차
+59,Japan_003021.jpg,crack,4,406,31,409,0.0,12,H,진짜 균열처럼 보임 (정답 없음),Claude 1차
+60,Japan_003271.jpg,pothole,233,528,254,552,0.0,13,B,보닛 · 차체 · 유리 반사,Claude 1차
+61,Japan_003487.jpg,crack,165,526,188,534,0.0,6,E,노면 질감,Claude 1차
+62,Japan_003663.jpg,crack,309,476,319,527,0.0,162,E,노면 질감,Claude 1차
+63,Japan_003663.jpg,crack,179,479,193,526,0.0,162,E,노면 질감,Claude 1차
+64,Japan_003663.jpg,crack,455,490,476,511,0.0,162,E,노면 질감,Claude 1차
+65,Japan_003663.jpg,crack,205,504,212,571,0.0,162,E,노면 질감,Claude 1차
+66,Japan_003663.jpg,crack,264,516,271,552,0.0,162,E,노면 질감,Claude 1차
+67,Japan_003663.jpg,crack,478,523,506,562,0.0,162,E,노면 질감,Claude 1차
+68,Japan_003663.jpg,crack,425,527,465,585,0.0,162,E,노면 질감,Claude 1차
+69,Japan_003663.jpg,crack,173,547,180,575,0.0,162,E,노면 질감,Claude 1차
+70,Japan_003663.jpg,crack,135,554,147,583,0.0,162,E,노면 질감,Claude 1차
+71,Japan_004023.jpg,crack,308,551,353,574,0.0,8,G,물체,Claude 1차
+72,Japan_004104.jpg,crack,94,369,122,373,0.0,13,C,차선 · 노면 페인트,Claude 1차
+73,Japan_004346.jpg,crack,220,479,246,488,0.0,8,E,노면 질감,Claude 1차
+74,Japan_004614.jpg,crack,125,463,142,493,0.0,131,E,노면 질감,Claude 1차
+75,Japan_004614.jpg,crack,235,491,239,537,0.0,131,E,노면 질감,Claude 1차
+76,Japan_004614.jpg,crack,369,498,383,532,0.0,131,E,노면 질감,Claude 1차
+77,Japan_004614.jpg,crack,225,521,229,549,0.0,131,E,노면 질감,Claude 1차
+78,Japan_004614.jpg,crack,349,559,357,594,0.0,131,E,노면 질감,Claude 1차
+79,Japan_004614.jpg,crack,354,559,361,587,0.0,131,E,노면 질감,Claude 1차
+80,Japan_004621.jpg,crack,64,187,99,197,0.0,6,E,노면 질감,Claude 1차
+81,Japan_004634.jpg,crack,568,497,600,500,0.0,5,B,보닛 · 차체 · 유리 반사,Claude 1차
+82,Japan_004820.jpg,crack,410,519,447,525,0.0,40,B,보닛 · 차체 · 유리 반사,Claude 1차
+83,Japan_004820.jpg,pothole,101,538,121,568,0.0,40,B,보닛 · 차체 · 유리 반사,Claude 1차
+84,Japan_004820.jpg,pothole,546,546,574,582,0.0,40,B,보닛 · 차체 · 유리 반사,Claude 1차
+85,Japan_004914.jpg,crack,554,406,557,436,0.0,52,A,노면 밖,Claude 1차
+86,Japan_004914.jpg,crack,498,468,530,476,0.0,52,E,노면 질감,Claude 1차
+87,Japan_004914.jpg,crack,550,524,600,531,0.0,52,F,이음매 · 패치 · 포장 경계,Claude 1차
+88,Japan_004928.jpg,crack,416,479,442,489,0.0,20,E,노면 질감,Claude 1차
+89,Japan_005050.jpg,crack,391,292,454,305,0.0,4,C,차선 · 노면 페인트,Claude 1차
+90,Japan_005472.jpg,crack,306,526,310,555,0.0,40,E,노면 질감,Claude 1차
+91,Japan_005472.jpg,crack,173,569,186,593,0.0,40,E,노면 질감,Claude 1차
+92,Japan_005545.jpg,crack,61,445,229,462,0.0,33,H,진짜 균열처럼 보임 (정답 없음),Claude 1차
+93,Japan_005791.jpg,crack,398,409,413,450,0.0,149,E,노면 질감,Claude 1차
+94,Japan_005791.jpg,crack,488,460,499,504,0.0,149,H,진짜 균열처럼 보임 (정답 없음),Claude 1차
+95,Japan_005791.jpg,crack,177,487,188,514,0.0,149,E,노면 질감,Claude 1차
+96,Japan_005791.jpg,crack,301,500,309,540,0.0,149,E,노면 질감,Claude 1차
+97,Japan_005972.jpg,crack,217,500,228,546,0.0,18,H,진짜 균열처럼 보임 (정답 없음),Claude 1차
+98,Japan_006901.jpg,crack,36,497,61,516,0.0,8,A,노면 밖,Claude 1차
+99,Japan_007041.jpg,pothole,247,537,266,558,0.0,33,B,보닛 · 차체 · 유리 반사,Claude 1차
+100,Japan_007278.jpg,pothole,350,522,370,549,0.0,22,B,보닛 · 차체 · 유리 반사,Claude 1차
+101,Japan_008406.jpg,crack,500,164,521,179,0.0,74,H,진짜 균열처럼 보임 (정답 없음),Claude 1차
+102,Japan_008406.jpg,crack,300,459,304,490,0.481,74,I,정답 박스에 걸침,Claude 1차
+103,Japan_008406.jpg,crack,67,465,73,496,0.0,74,E,노면 질감,Claude 1차
+104,Japan_008406.jpg,crack,348,482,351,513,0.0,74,E,노면 질감,Claude 1차
+105,Japan_008406.jpg,crack,488,506,496,529,0.0,74,H,진짜 균열처럼 보임 (정답 없음),Claude 1차
+106,Japan_008542.jpg,crack,352,475,378,485,0.0,13,E,노면 질감,Claude 1차
+107,Japan_008542.jpg,crack,117,586,143,600,0.0,13,H,진짜 균열처럼 보임 (정답 없음),Claude 1차
+108,Japan_009325.jpg,crack,292,511,325,530,0.0,11,E,노면 질감,Claude 1차
+109,Japan_009521.jpg,crack,193,322,230,325,0.0,18,A,노면 밖,Claude 1차
+110,Japan_009660.jpg,pothole,262,488,311,511,0.0,1,B,보닛 · 차체 · 유리 반사,Claude 1차
+111,Japan_009738.jpg,crack,51,260,64,297,0.0,17,A,노면 밖,Claude 1차
+112,Japan_010021.jpg,crack,226,412,265,422,0.0,9,C,차선 · 노면 페인트,Claude 1차
+113,Japan_010051.jpg,crack,558,555,595,571,0.0,4,H,진짜 균열처럼 보임 (정답 없음),Claude 1차
+114,Japan_010138.jpg,crack,0,232,234,590,0.05,40,A,노면 밖,Claude 1차
+115,Japan_010138.jpg,crack,196,471,208,496,0.0,40,H,진짜 균열처럼 보임 (정답 없음),Claude 1차
+116,Japan_010255.jpg,pothole,510,543,534,559,0.0,15,B,보닛 · 차체 · 유리 반사,Claude 1차
+117,Japan_010377.jpg,pothole,224,522,245,548,0.0,28,B,보닛 · 차체 · 유리 반사,Claude 1차
+118,Japan_010611.jpg,crack,501,72,553,84,0.0,85,E,노면 질감,Claude 1차
+119,Japan_010611.jpg,crack,587,174,644,190,0.0,85,F,이음매 · 패치 · 포장 경계,Claude 1차
+120,Japan_010611.jpg,crack,263,843,320,873,0.0,85,E,노면 질감,Claude 1차
+121,Japan_010769.jpg,crack,245,503,263,530,0.0,19,E,노면 질감,Claude 1차
+122,Japan_010985.jpg,crack,323,406,351,411,0.0,19,A,노면 밖,Claude 1차
+123,Japan_011120.jpg,crack,79,501,125,511,0.0,16,F,이음매 · 패치 · 포장 경계,Claude 1차
+124,Japan_011682.jpg,crack,55,578,84,589,0.0,23,E,노면 질감,Claude 1차
+125,Japan_011891.jpg,crack,291,270,395,277,0.0,49,C,차선 · 노면 페인트,Claude 1차
+126,Japan_011891.jpg,crack,336,429,349,453,0.0,49,H,진짜 균열처럼 보임 (정답 없음),Claude 1차
+127,Japan_011914.jpg,crack,152,370,183,386,0.0,20,A,노면 밖,Claude 1차
+128,Japan_012234.jpg,crack,542,432,570,440,0.0,36,A,노면 밖,Claude 1차
+129,Japan_012354.jpg,crack,321,531,359,551,0.0,11,E,노면 질감,Claude 1차
+130,Japan_012453.jpg,crack,214,403,225,429,0.0,209,E,노면 질감,Claude 1차
+131,Japan_012453.jpg,crack,432,464,436,495,0.0,209,E,노면 질감,Claude 1차
+132,Japan_012453.jpg,crack,186,496,199,516,0.0,209,E,노면 질감,Claude 1차
+133,Norway_002353.jpg,crack,2825,1410,2996,1489,0.0,8,A,노면 밖,Claude 1차
+134,Norway_003021.jpg,pothole,3633,1742,3977,1996,0.0,8,A,노면 밖,Claude 1차
+135,Norway_003604.jpg,crack,3636,1674,3643,2041,0.0,4,J,판별 어려움,Claude 1차
+136,Norway_003604.jpg,pothole,2281,1928,2358,2041,0.0,4,D,그림자 경계,Claude 1차
+137,Norway_003723.jpg,pothole,1653,1884,1778,1960,0.0,2,D,그림자 경계,Claude 1차
+138,Norway_007796.jpg,pothole,1780,1338,1897,1532,0.0,1,A,노면 밖,Claude 1차
+139,Norway_007802.jpg,crack,1062,1083,1287,1155,0.0,3,A,노면 밖,Claude 1차
+140,United_States_000856.jpg,crack,302,396,350,418,0.0,10,D,그림자 경계,Claude 1차
+141,United_States_000911.jpg,crack,368,601,384,623,0.0,6,H,진짜 균열처럼 보임 (정답 없음),Claude 1차
+142,United_States_000983.jpg,crack,355,435,607,464,0.0,16,D,그림자 경계,Claude 1차
+143,United_States_001101.jpg,crack,89,499,112,532,0.0,3,C,차선 · 노면 페인트,Claude 1차
+144,United_States_001636.jpg,crack,583,612,611,619,0.0,6,A,노면 밖,Claude 1차
+145,United_States_001636.jpg,crack,86,614,102,640,0.451,6,I,정답 박스에 걸침,Claude 1차
+146,United_States_002171.jpg,crack,245,381,640,476,0.0,2,J,판별 어려움,Claude 1차
+147,United_States_002581.jpg,crack,67,608,90,625,0.0,13,G,물체,Claude 1차
+148,United_States_003011.jpg,crack,180,439,198,501,0.0,3,H,진짜 균열처럼 보임 (정답 없음),Claude 1차
+149,United_States_003579.jpg,crack,610,538,640,546,0.0,13,A,노면 밖,Claude 1차
+150,United_States_004444.jpg,crack,0,456,29,465,0.0,11,D,그림자 경계,Claude 1차
