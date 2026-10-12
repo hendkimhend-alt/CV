@@ -20,7 +20,7 @@ detect()에서 pothole_method="texture"일 때만 쓰인다. 기본값 "adaptive
      (pothole_find="ring"이면 3) 대신: 거칠기 ÷ 주변 고리(노면 마스크 안 픽셀만)의 평균 거칠기 = 고리 비
         → 고리 비 > pothole_ring_ratio인 픽셀. 고리 2개(안 41/바깥 121 · 안 121/바깥 361px) 중 큰 값.
         줄 전체에는 노면 밖 · 먼 곳 질감이 섞여 기준이 흔들림 — 후보를 바로 주변의 노면과만 비교
-        (Ryu 2015 · Koch & Brilakis 2011의 '주변 노면과 비교' · 근거 results/experiments.md 10/12 · 신서준)
+        (Ryu 2015 · Koch & Brilakis 2011의 '주변 노면과 비교' · 근거 results/experiments.md 10/12 · 황승준)
   C. 후보 검증 (모두 통과해야 포트홀)
      ① 색도 차 ≤ pothole_chroma_max    : 상자 안과 주변 고리의 정규화 RGB 색도 차 — 차량 · 간판 등 색이 다른 물체 제거
      ② 어두운 10% ≥ pothole_darkp10_min : 상자 안 하위 10% 밝기가 주변보다 어둡거나 같음 — 패인 부분의 그림자
