@@ -25,6 +25,11 @@ from data import list_images  # noqa: E402
 from paths import OUTPUT_DIR, imread  # noqa: E402
 
 LINE_TRACE = R.detect.__globals__["line_trace"]
+# --m3: 아주 흐린 사진(노면 선명도 < 2.76)이면 질감 처리를 건너뛰고 언샤프 σ2 · 2.0 (섞인 흐림 실험 M3, 10/12)
+M3 = {"gaussian": {"ksize": 3, "sigma": 0.8, "apply_to": "not_blur_rt", "blur_thr": 2.76},
+      "line_close": {"length": 7, "angles": 12, "apply_to": "not_blur_rt"},
+      "unsharp": {"amount": 2.0, "sigma": 2.0, "apply_to": "blur_rt"}, "clahe": {"clip": 1.0, "tile": 8},
+      "order": ["gaussian", "line_close", "unsharp", "clahe"]}
 TOUCH = R.detect.__globals__["_touches_border"]
 FONT = "/System/Library/Fonts/AppleSDGothicNeo.ttc"
 # 이유 → (BGR 색, 설명)
@@ -75,11 +80,12 @@ def legend(width, title, counts, size):
     return cv2.cvtColor(np.array(bar), cv2.COLOR_RGB2BGR)
 
 
-def run(dataset):
+def run(dataset, extra=None, tag=""):
+    extra = extra or V.EXTRA
     pre_cfg, det = R.load_config(R.PRE_CFG), R.load_detection_config(R.DET_CFG)
     cfg = {**R.DEFAULT_CFG, **det["detect_cfg"], "line_hi_abs": V.HI}
     _, _, images = list_images(dataset)
-    out = OUTPUT_DIR / "crack_diagnosis" / dataset
+    out = OUTPUT_DIR / "crack_diagnosis" / (dataset + tag)
     out.mkdir(parents=True, exist_ok=True)
     for path in images:
         meta, img, mask, geo = R.prepare(path, pre_cfg, det, None)
@@ -89,7 +95,8 @@ def run(dataset):
             cv2.imwrite(str(out / f"{path.stem}.jpg"), np.vstack([bar, vis]))
             print(f"  {path.stem}: 전처리 실패")
             continue
-        proc, _ = R.apply_extra(img, mask, V.EXTRA, set())
+        tags = R.runtime_tags(path.name, img, mask, geo, extra, lambda n: [])
+        proc, _ = R.apply_extra(img, mask, extra, tags)
         H, W = proc.shape[:2]
         trace, _, _ = LINE_TRACE(R._to_gray(proc), cfg)
         vis = proc.copy()
@@ -124,12 +131,14 @@ def run(dataset):
             dr.rectangle([x0 - 4, 6, x0 + tw + 8, 12 + max(18, W // 40) + 6], fill=(255, 255, 255))
             dr.text((x0, 8), lab, font=fz, fill=(15, 23, 42))
             both = cv2.cvtColor(np.array(pil), cv2.COLOR_RGB2BGR)
-        title = f"{path.stem} — 최종 균열 {counts.get('남음', 0)}개 · 처음 찾은 후보 덩어리 {sum(counts.values())}개 (검출기 입력, 배율 {geo['scale_x']:.2f})"
+        title = f"{path.stem} — 최종 균열 {counts.get('남음', 0)}개 · 처음 찾은 후보 덩어리 {sum(counts.values())}개 (검출기 입력, 배율 {geo['scale_x']:.2f})" + (
+            f" · 노면 선명도 {R.sharpness(img, mask, geo):.2f} → {'아주 흐림: 질감 처리 건너뜀 + 샤프닝' if 'blur_rt' in tags else '선명: 그대로'}" if tag else "")
         cv2.imwrite(str(out / f"{path.stem}.jpg"), np.vstack([legend(both.shape[1], title, counts, max(18, W // 55)), both]))
         print(f"  {path.stem}: " + " · ".join(f"{k} {v}" for k, v in counts.items()))
     print(f"→ {out}")
 
 
 if __name__ == "__main__":
-    for ds in sys.argv[1:] or ("provided",):
-        run(ds)
+    args = [x for x in sys.argv[1:] if not x.startswith("--")]
+    for ds in args or ("provided",):
+        run(ds, M3, "_M3") if "--m3" in sys.argv else run(ds)
