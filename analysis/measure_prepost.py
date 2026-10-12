@@ -1,8 +1,10 @@
-"""전처리 전 (자동 ROI) · 후 (최종) — 후보 수 · 후보 면적 · 처리 시간. 검출기 설정은 같음 (p2bd)."""
+"""실행: ROAD_CACHE=<b_cache 폴더> python analysis/measure_prepost.py
+전처리 전 (자동 ROI) · 후 (최종) — 후보 수 · 후보 면적 · 처리 시간. 검출기 설정은 같음 (p2bd)."""
 import sys, json, csv, time, random
 from pathlib import Path
 ROOT = Path("/Users/sj/devel_sj/computer-vision/CV")
-SP = Path("/private/tmp/claude-501/-Users-sj-devel-sj-computer-vision/3a67ef65-f2e1-4551-8fc7-4e186d0342d7/scratchpad")
+SP = ROOT / "results" / "analysis"
+CACHE = Path(__import__("os").environ.get("ROAD_CACHE", ""))  # analysis/run_road_pipeline.py --cache 폴더 (b_cache)
 sys.argv = [sys.argv[0]]
 sys.path.insert(0, str(ROOT / "analysis"))
 import run_road_pipeline as R
@@ -38,7 +40,7 @@ for i, path in enumerate(images, 1):
     row.update(A_n=len(dA), A_area=sum(d["area"] for d in dA) / s, A_box=sum(d["bbox"][2] * d["bbox"][3] for d in dA) / s, A_pre_ms=(t2 - t0) * 1000, A_det_ms=(t3 - t2) * 1000)
     # 전처리 후 (F) — 시간 표본은 캐시 없이 처음부터
     t0 = time.perf_counter()
-    meta, im2, mask, g2 = R.prepare(path, pre_cfg, det, None if row["timed"] else SP / "b_cache")
+    meta, im2, mask, g2 = R.prepare(path, pre_cfg, det, None if row["timed"] else CACHE)
     if im2 is None:
         row.update(F_n=0, F_area=0.0, F_box=0.0); out.append(row); continue
     im2, _ = R.apply_extra(im2, mask, rcF["extra"], set(group.get(path.name, "").split(";")))
@@ -51,7 +53,7 @@ for i, path in enumerate(images, 1):
     row.update(F_n=len(dF), F_area=sum(d["area"] for d in dF) / s2, F_box=sum(d["bbox"][2] * d["bbox"][3] for d in dF) / s2, F_pre_ms=(t1 - t0) * 1000, F_det_ms=(t2 - t1) * 1000)
     out.append(row)
     if i % 50 == 0: print(i, flush=True)
-with open(SP / "diag/prepost.csv", "w", newline="") as f:
+with open(SP / "prepost.csv", "w", newline="") as f:
     w = csv.DictWriter(f, fieldnames=list(dict.fromkeys(k for r in out for k in r))); w.writeheader(); w.writerows(out)
 m = lambda k, rs: float(np.mean([r[k] for r in rs if k in r]))
 T = [r for r in out if r["timed"]]
