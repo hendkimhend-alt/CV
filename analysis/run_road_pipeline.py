@@ -30,6 +30,7 @@ B 위에 얹는 보정 (--extra, 기본 없음 = B 그대로):
 실행 (저장소 맨 위 폴더에서, opencv-contrib 필요):
   python analysis/run_road_pipeline.py --note "B 재현"                                    # 563장 약 15분
   python analysis/run_road_pipeline.py --final-config configs/final_crack.json --config-name f_final --note "최종 F"   # 균열 최종 구성
+  python analysis/run_road_pipeline.py --final-config configs/final.json --config-name final --note "최종"         # 균열 + 포트홀 (같은 전처리 · 검출기만 따로)
   python analysis/run_road_pipeline.py --limit 20 --no-log                                  # 빠른 확인
   python analysis/run_road_pipeline.py --cache 폴더 --note "…"                             # 전처리 · 연결 결과를 폴더에 저장 / 있으면 다시 씀
   python analysis/run_road_pipeline.py --cache 폴더 --extra '{"line_close": {"length": 11, "angles": 12}}' \
@@ -71,6 +72,8 @@ from data import list_images, load_gt, load_viewpoints  # noqa: E402
 from evaluate import CRITERIA, KINDS, evaluate  # noqa: E402
 from paths import OUTPUT_DIR, imread  # noqa: E402
 from run_pipeline import git_version, log_run, new_run_dir, parse_overrides  # noqa: E402
+from detect import DEFAULT_CFG as POTHOLE_BASE_CFG  # noqa: E402  (맨 위 src/ — 포트홀 2단계 설정 기본값)
+from pothole import texture_potholes  # noqa: E402  (포트홀 2단계, 임경민 · docs/pothole.md)
 sys.path.insert(0, str(ROOT / "analysis"))
 from blur_degrade import degrade  # noqa: E402
 
@@ -223,10 +226,13 @@ def main():
     base_cfg = {**DEFAULT_CFG, **det["detect_cfg"]}
     cfg = {**base_cfg, **parse_overrides(a.det_set)}
     extra = json.loads(a.extra)
+    pothole_cfg = None
     if a.final_config:
         fc = json.loads(a.final_config.read_text(encoding="utf-8"))
         extra = fc["extra"]
         cfg["line_hi_abs"] = float(fc["line_hi_abs"])
+        if "pothole" in fc:                              # 같은 전처리 위에서 포트홀 검출기를 따로 (1차 포트홀 대신)
+            pothole_cfg = {**POTHOLE_BASE_CFG, **fc["pothole"]}
         if a.calibrate:
             raise SystemExit("error:--final-config에는 맞춘 강한 기준이 들어 있음 — --calibrate와 같이 쓰지 않는다")
     deg = json.loads(a.degrade) if a.degrade else None
@@ -286,7 +292,11 @@ def main():
         dets, applied = [], False
         if img is not None:
             img, applied = apply_extra(img, mask, extra, runtime_tags(path.name, img, mask, geo, extra, tags_of))
-            for d in detect(img, cfg):
+            cands = detect(img, cfg)
+            if pothole_cfg is not None:                  # 균열은 위 검출기, 포트홀은 포트홀 2단계 — 둘 다 같은 전처리 영상에서
+                cands = [d for d in cands if d["type"] != "pothole"] + \
+                        [d for d in texture_potholes(img, pothole_cfg) if d["type"] == "pothole"]
+            for d in cands:                              # 도로 위 판정은 균열 · 포트홀 공통
                 if road_overlap(mask, d["bbox"]) >= integ["min_road_overlap"]:
                     x, y, w, h = to_original_bbox(d["bbox"], geo)
                     dets.append({"type": d["type"], "bbox": [round(x, 1), round(y, 1), round(w, 1), round(h, 1)]})
@@ -316,7 +326,8 @@ def main():
     json.dump(dets_all, open(run_dir / "detections.json", "w"))
     json.dump({"dataset": a.dataset, "limit": a.limit, "preprocessing_config": str(pre_path.relative_to(ROOT)),
                "preprocessing_hash": config_hash(pre_cfg), "detection_config": str(det_path.relative_to(ROOT)),
-               "det_set": a.det_set, "extra": extra, "degrade": deg, "line_hi_abs": hi_used, "calibrated": a.calibrate,
+               "det_set": a.det_set, "extra": extra,
+               "pothole": None if pothole_cfg is None else {k: v for k, v in pothole_cfg.items() if k.startswith("pothole")}, "degrade": deg, "line_hi_abs": hi_used, "calibrated": a.calibrate,
                "code": git_version(), "note": a.note}, open(run_dir / "run_config.json", "w"), ensure_ascii=False, indent=2)
     n_unv = sum(r["unverified_mask"] for r in rows)
     print(f"상태: { {s: sum(r['status'] == s for r in rows) for s in dict.fromkeys(r['status'] for r in rows)} }"

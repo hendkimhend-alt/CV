@@ -21,6 +21,7 @@
 > **최종 구성 F 재기** (10/11, 설정 칸 `t_c10_post`):
 > `python analysis/run_road_pipeline.py --final-config configs/final_crack.json --config-name f_final --note "…"`
 > — 보정 순서와 맞춘 강한 기준(132.172, B의 강한 흔적 총수에 맞춘 값)이 `configs/final_crack.json`에 들어 있다 (캐시 없이 처음부터 돌려도 됨, `--cache`를 주면 빨라짐). 순서 = 노면 마스크 → 감마(어두운 사진만) → 노면 영역 자르기 · 긴 변 1024 → [노면 안에만] 가우시안 → 막대 닫힘 → CLAHE → Hessian 선 점수 → 텐서 전파 → 중심선 → 이중 임계값 → 버리기 (길이 · 양쪽 확인 · 노면 단서 · 깊이) → 도로 위 판정
+> **최종 (균열 + 포트홀)**: `python analysis/run_road_pipeline.py --final-config configs/final.json --config-name final --note "…"` — 같은 전처리 영상에서 균열은 위 검출기, 포트홀은 포트홀 2단계(`src/pothole.py`, `docs/pothole.md`)로 따로 찾고 도로 위 판정은 공통 (10/12, `run_20261012_140359`: 균열 R 0.587 · P 0.355 그대로 · 포트홀 R 0.340 · P 0.035 · 가짜 1.94개/장)
 > ⚠️ `CV-main/`의 자체 평가(`src/run_final.py` 등)는 "겹치면 적중" + ROI 밖 정답 제외라 **이 문서의 숫자와 비교할 수 없다.**
 > `CV-main/`의 전처리를 비교하려면, 그 전처리를 맨 위 `src/`의 설정(`--conditions` · `--roi` 등)으로 넣어 같은 방법으로 잰다.
 
