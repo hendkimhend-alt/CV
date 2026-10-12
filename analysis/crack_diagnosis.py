@@ -7,6 +7,7 @@
   후보 덩어리 (흔적을 이은 덩어리) = 박스, 버린 이유마다 색 — 남은 균열은 굵은 빨강
 버린 이유는 detect()의 판정 순서 그대로: 길이 < 45 → 세장비 < 3 → 사진 위 테두리에 닿음 → 양쪽 확인 < 0.35
   → 노면 단서(구조 세기 · 정렬 · 색) → 깊이 < 0.267 → (검출 뒤) 도로 위 판정 (박스의 50% 미만이 노면)
+그림은 왼쪽 = 원본 (같은 영역 · 같은 크기, 아무 처리 없음) · 오른쪽 = 진단
 실행: python analysis/crack_diagnosis.py provided → outputs/crack_diagnosis/provided/*.jpg
 """
 import sys
@@ -112,8 +113,19 @@ def run(dataset):
                 cv2.rectangle(vis, (x, y), (x + w, y + h), REASONS[r][0], 2)
         for x, y, w, h in kept:                               # 남은 균열은 맨 위에 굵게
             cv2.rectangle(vis, (x, y), (x + w, y + h), (0, 0, 255), 4)
+        raw = imread(path)[geo["crop_y"]:geo["crop_y"] + geo["crop_height"], geo["crop_x"]:geo["crop_x"] + geo["crop_width"]]
+        raw = cv2.resize(raw, (W, H), interpolation=cv2.INTER_AREA if geo["scale_x"] < 1 else cv2.INTER_CUBIC)
+        gap = np.full((H, 12, 3), 255, np.uint8)
+        both = np.hstack([raw, gap, vis])
+        for x0, lab in ((10, "원본 (처리 없음)"), (W + 22, "진단 (ROI · 처음 찾은 흔적 · 버린 이유)")):
+            pil = Image.fromarray(cv2.cvtColor(both, cv2.COLOR_BGR2RGB)); dr = ImageDraw.Draw(pil)
+            fz = ImageFont.truetype(FONT, max(18, W // 40), index=6)
+            tw = dr.textlength(lab, font=fz)
+            dr.rectangle([x0 - 4, 6, x0 + tw + 8, 12 + max(18, W // 40) + 6], fill=(255, 255, 255))
+            dr.text((x0, 8), lab, font=fz, fill=(15, 23, 42))
+            both = cv2.cvtColor(np.array(pil), cv2.COLOR_RGB2BGR)
         title = f"{path.stem} — 최종 균열 {counts.get('남음', 0)}개 · 처음 찾은 후보 덩어리 {sum(counts.values())}개 (검출기 입력, 배율 {geo['scale_x']:.2f})"
-        cv2.imwrite(str(out / f"{path.stem}.jpg"), np.vstack([legend(W, title, counts, max(18, W // 55)), vis]))
+        cv2.imwrite(str(out / f"{path.stem}.jpg"), np.vstack([legend(both.shape[1], title, counts, max(18, W // 55)), both]))
         print(f"  {path.stem}: " + " · ".join(f"{k} {v}" for k, v in counts.items()))
     print(f"→ {out}")
 
