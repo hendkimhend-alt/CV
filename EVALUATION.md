@@ -13,11 +13,14 @@
 | 데이터 | **`rdd_dev` 563장** (RDD 개발 세트) | 실험 · 비교는 여기서만. `rdd_test`는 아래 7절 |
 | 측정 | **in50** 판정 (`src/evaluate.py`) · 균열 | 아래 2절 |
 | 지표 | **Recall · Precision · F1** + 가짜/장 · 조각/맞힘 (10/10 고정) | 아래 2절 |
-| 비교 기준 | **균열 최종 구성 B** (10/10 확정 — 팀원 전처리 v1.1 + 연결 + 도로 위 판정 + `p2bd`, `analysis/run_road_pipeline.py`) · 검출기만 바꿀 때는 `configs/p2bd.json` (6절 표) | 무엇을 바꿨든 이것보다 나아졌는지를 본다 |
+| 비교 기준 | **균열 최종 구성 F** (10/11 — B + 질감 줄이기(가우시안 σ0.8 → 막대 닫힘 7px) + CLAHE 1.0, `analysis/run_road_pipeline.py`) · 검출기만 바꿀 때는 `configs/p2bd.json` (6절 표) | 무엇을 바꿨든 이것보다 나아졌는지를 본다 |
 | 비교 방법 | 같은 사진끼리 짝지은 95% 범위 (`analysis/compare_runs.py`) | 우연인 차이를 걸러냄 |
 | 흔적 양 | 찾기를 바꾸면 **강한 흔적 총수를 기준과 같게** 맞춘 강한 기준값으로 (`analysis/calibrate.py`) | "더 많이 뽑아서" 오른 것과 "방법이 좋아서" 오른 것을 가르려고 |
 
 > **B 구성 재기**: `python analysis/run_road_pipeline.py --note "…"` — `CV-main/`의 실행 코드 · 설정(`CV-main/configs/preprocessing.json` · `detection_p2bd.json`)으로 돌리고 **이 문서의 in50으로 채점**해 `runs.csv`에 남긴다 (설정 칸 `b_road`). B 위에 하나만 바꿀 때는 `--pre-config` · `--det-config`로 바꾼 설정 파일을 주고 `--config-name`을 새 이름으로.
+> **최종 구성 F 재기** (10/11, 설정 칸 `t_c10_post`):
+> `python analysis/run_road_pipeline.py --cache <캐시 폴더> --extra '{"gaussian": {"ksize": 3, "sigma": 0.8}, "line_close": {"length": 7, "angles": 12}, "clahe": {"clip": 1.0, "tile": 8}, "order": ["gaussian", "line_close", "clahe"]}' --calibrate --config-name f_final --note "…"`
+> — `--calibrate`가 강한 기준을 B의 강한 흔적 총수에 맞춘다 (개발 563장: 132.172). 순서 = 노면 마스크 → 감마(어두운 사진만) → 노면 영역 자르기 · 긴 변 1024 → [노면 안에만] 가우시안 → 막대 닫힘 → CLAHE → Hessian 선 점수 → 텐서 전파 → 중심선 → 이중 임계값 → 버리기 (길이 · 양쪽 확인 · 노면 단서 · 깊이) → 도로 위 판정
 > ⚠️ `CV-main/`의 자체 평가(`src/run_final.py` 등)는 "겹치면 적중" + ROI 밖 정답 제외라 **이 문서의 숫자와 비교할 수 없다.**
 > `CV-main/`의 전처리를 비교하려면, 그 전처리를 맨 위 `src/`의 설정(`--conditions` · `--roi` 등)으로 넣어 같은 방법으로 잰다.
 
@@ -136,11 +139,12 @@ python analysis/compare_runs.py 기준=run_A 후보=run_B --split
 | `old_main` | 이전 주 검출기 (Black-hat + 양쪽 확인 + 잇기) | 0.360 · 0.166 · 0.227 | 5.5 · 2.3 | 0.328 · 0.165 · 0.220 |
 | **`p2bd`** | **지금 기준 = 검출기 최종** (ROI auto · 보정 없음 · Hessian 찾기 · 텐서 전파 · 노면 단서 · 깊이) | **0.571 · 0.286 · 0.381** | **9.3 · 4.9** | **0.482 · 0.261 · 0.339** |
 | `gf3` | `p2bd` + 가이드 필터 (전처리 제안 — opencv-contrib 필요) | 0.555 · 0.334 · 0.417 | 6.3 · 4.3 | 0.482 · 0.310 · 0.377 |
-| **`b_road` (B)** | **균열 최종 구성 (10/10)** = 팀원 전처리 v1.1 + 연결 + 도로 위 판정 + `p2bd` (`analysis/run_road_pipeline.py`) | **0.555 · 0.330 · 0.414** | **7.3 · 4.9** | (아직 안 씀 — 4단계 동결 뒤 한 번) |
+| `b_road` (B) | 노면 마스크 구성 (10/10) = 팀원 전처리 v1.1 + 연결 + 도로 위 판정 + `p2bd` (`analysis/run_road_pipeline.py`) | 0.555 · 0.330 · 0.414 | 7.3 · 4.9 | — |
+| **`t_c10_post` (F)** | **균열 최종 구성 (10/11)** = B + 질감 줄이기(가우시안 σ0.8 → 막대 닫힘 7px) + CLAHE 1.0 (노면 마스크 안에만) | **0.587 · 0.355 · 0.442** | **6.4 · 4.6** | (아직 안 씀 — 동결 뒤 한 번) |
 
 10/10 지표 고정 때 저장된 결과로 다시 채점한 값 (검출은 다시 안 돌림). 이전 계산 P는 `runs.csv`의 `crack_precision_hit`.
 
-포트홀은 모든 설정에서 개발 R ≈ 0.01 · 가짜 약 4.7개/장 (1차 방식 그대로).
+포트홀은 위 설정 모두 1차 방식 그대로 (개발 R ≈ 0.01 · 가짜 약 4.7개/장). 포트홀 2단계는 `configs/p2bd_pothole.json` (10/10, 담당 임경민 · `docs/pothole.md`) — 균열 결과는 그대로.
 
 ## 7. 테스트 세트 (`rdd_test` 241장)
 
