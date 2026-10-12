@@ -60,6 +60,8 @@ DEFAULT_CFG = {
     "pothole_method": "adaptive",
     "pothole_tex_k": 21,         # [후보] 거칠기(기울기 세기)를 평균할 창 (px, 긴 변 1024 기준)
     "pothole_tex_z": 2.5,        # [후보] 같은 높이 노면 대비 거칠기 z가 이보다 크면 후보
+    "pothole_find": "row_z",     # [후보] "row_z" = 같은 높이 줄 대비 z (위) · "ring" = 주변 노면 고리 대비 비 (아래)
+    "pothole_ring_ratio": 1.8,   # [후보] "ring"일 때: 거칠기 ÷ 주변 노면 고리의 거칠기가 이보다 크면 후보
     "pothole_min_frac": 0.0006,  # [후보] 면적 하한 (사진 면적 대비)
     "pothole_max_frac": 0.08,    # [후보] 면적 상한
     "pothole_chroma_max": 1.0,   # [검증 ①] 상자 안 · 주변 색도 차 ≤ 이 값 (색이 다른 물체 제거)

@@ -17,6 +17,10 @@ detect()에서 pothole_method="texture"일 때만 쓰인다. 기본값 "adaptive
      3) 행별 표준화: 같은 높이(= 카메라에서 같은 거리)끼리 중앙값 · MAD로 z 점수
         → 먼 곳일수록 질감이 촘촘해지는 원근 차이를 행 단위로 보정 (조감도 변환 없이)
      4) z > 기준인 픽셀 → 열림 5×5로 잡음 제거 → 연결 요소 → 면적 범위 안의 것만 후보 (수업 2-1 형태학 · 연결 요소)
+     (pothole_find="ring"이면 3) 대신: 거칠기 ÷ 주변 고리(노면 마스크 안 픽셀만)의 평균 거칠기 = 고리 비
+        → 고리 비 > pothole_ring_ratio인 픽셀. 고리 2개(안 41/바깥 121 · 안 121/바깥 361px) 중 큰 값.
+        줄 전체에는 노면 밖 · 먼 곳 질감이 섞여 기준이 흔들림 — 후보를 바로 주변의 노면과만 비교
+        (Ryu 2015 · Koch & Brilakis 2011의 '주변 노면과 비교' · 근거 results/experiments.md 10/12 · 신서준)
   C. 후보 검증 (모두 통과해야 포트홀)
      ① 색도 차 ≤ pothole_chroma_max    : 상자 안과 주변 고리의 정규화 RGB 색도 차 — 차량 · 간판 등 색이 다른 물체 제거
      ② 어두운 10% ≥ pothole_darkp10_min : 상자 안 하위 10% 밝기가 주변보다 어둡거나 같음 — 패인 부분의 그림자
@@ -49,6 +53,27 @@ def texture_z(gray, k, row_band=15):
     return (E - med[:, None]) / mad[:, None]
 
 
+def ring_ratio(gray, mask=None, k=21, rings=((41, 121), (121, 361)), min_cov=0.3):
+    """고리 비 지도: 픽셀마다 '주변 노면 고리보다 몇 배 거친가'.
+
+    gray    : 회색 영상, mask : 노면 마스크 (0 = 노면 밖, None = 전체를 노면으로)
+    k       : 거칠기를 평균할 창 (texture_z와 같은 거칠기 지도)
+    rings   : (안쪽 창, 바깥 창) 크기 쌍 — 고리 = 바깥 창 − 안쪽 창 · 여러 개면 큰 비를 씀
+    min_cov : 고리 안 노면 픽셀이 고리 넓이의 이 비율 미만이면 계산 안 함 (0)
+    반환    : 거칠기 ÷ 고리 안 노면 픽셀의 평균 거칠기 (노면 밖은 0)
+    """
+    g = cv2.GaussianBlur(gray.astype(np.float32), (0, 0), 1.0)
+    E = cv2.blur(cv2.magnitude(cv2.Sobel(g, cv2.CV_32F, 1, 0), cv2.Sobel(g, cv2.CV_32F, 0, 1)), (k, k)).astype(np.float64)
+    M = np.ones_like(E) if mask is None else (mask > 0).astype(np.float64)
+    box = lambda a, n: cv2.boxFilter(a, -1, (n, n), normalize=False, borderType=cv2.BORDER_CONSTANT)   # 창 안 합
+    EM, out = E * M, np.zeros_like(E)
+    for a, b in rings:
+        S, N = box(EM, b) - box(EM, a), box(M, b) - box(M, a)                 # 고리 안 노면 픽셀의 거칠기 합 · 수
+        r = np.where(N >= min_cov * (b * b - a * a), E / (S / np.maximum(N, 1) + 1e-3), 0)
+        out = np.maximum(out, r)
+    return out * M
+
+
 def _box_cues(gray, chrom, box):
     """검증 ① · ②에 쓰는 값. 상자 안 vs 주변 고리(상자를 사방으로 절반씩 넓힌 창 − 상자).
 
@@ -72,8 +97,10 @@ def _box_cues(gray, chrom, box):
     return {"chroma": float(np.linalg.norm(ci - cr) * 100), "dark_p10": float(dark_p10)}
 
 
-def texture_potholes(img, cfg, keep_noise=False):
+def texture_potholes(img, cfg, keep_noise=False, mask=None):
     """포트홀 후보 생성 → 검증. img: BGR(또는 회색) 영상, cfg: detect.DEFAULT_CFG에 덮어쓴 설정.
+
+    mask: 노면 마스크 (pothole_find="ring"에서 고리를 노면 픽셀로만 잴 때. None = 전체)
 
     keep_noise=True면 검증에서 떨어진 후보도 type="noise"로 함께 돌려준다 (분석용).
     """
@@ -95,8 +122,11 @@ def texture_potholes(img, cfg, keep_noise=False):
         cue = (cue_maps, ref_stats(cue_maps, H, W), cue_values)
 
     # ---- 단계 B. 후보 생성 ----
-    Z = texture_z(gray, cfg["pothole_tex_k"])
-    m = (Z > cfg["pothole_tex_z"]).astype(np.uint8) * 255
+    if cfg.get("pothole_find", "row_z") == "ring":
+        m = (ring_ratio(gray, mask, cfg["pothole_tex_k"]) > cfg["pothole_ring_ratio"]).astype(np.uint8) * 255
+    else:
+        Z = texture_z(gray, cfg["pothole_tex_k"])
+        m = (Z > cfg["pothole_tex_z"]).astype(np.uint8) * 255
     m = cv2.morphologyEx(m, cv2.MORPH_OPEN, np.ones((5, 5), np.uint8))   # 점 같은 잡음 제거
     n, lab, st, _ = cv2.connectedComponentsWithStats(m, connectivity=8)
 
