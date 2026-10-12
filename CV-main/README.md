@@ -28,7 +28,9 @@ py src/run_road_detection.py --dataset rdd_dev --limit 20 --on-fail skip
 py src/preprocessing/edit_road_mask.py --image data/RDD2020_train/train/img/China_Drone_000785.jpg
 py src/run_road_detection.py --dataset rdd_dev --images China_Drone_000785.jpg --manual-mask-dir outputs/preprocessing/manual_masks
 py src/run_road_detection.py --input <사진> --edit-failed
-# 최종 검출기 설정 (opencv-contrib-python 필요)
+# 균열 최종 (검출기 p2bd + 검출기 입력 보정: 질감 처리 · CLAHE · 아주 흐린 사진만 언샤프) — opencv-contrib-python 필요
+py src/run_road_detection.py --input <사진 또는 폴더> --detection-config configs/detection_final.json
+# 검출기만 최종 (보정 없음, 이전 B 구성)
 py src/run_road_detection.py --input <사진 또는 폴더> --detection-config configs/detection_p2bd.json
 # 전처리만 (검출 없이)
 py src/preprocessing/run_preprocess.py --dataset rdd_dev --limit 20
@@ -61,7 +63,9 @@ py -m unittest discover -s tests
 | `src/paths.py` · `src/data.py` | 경로 · 한글 경로 입출력 · 입력 이미지 목록 (RDD 분할) |
 | `configs/preprocessing.json` | 전처리 설정 v1.1 (잠정값 포함) |
 | `configs/detection_default.json` | 기본 검출 설정 D1v (opencv-contrib 불필요) |
-| `configs/detection_p2bd.json` | 최종 검출기 설정 D1hv (opencv-contrib 필요) |
+| `configs/detection_p2bd.json` | 최종 검출기 설정 D1hv (opencv-contrib 필요) — 보정 없음 |
+| `configs/detection_final.json` | **균열 최종** = p2bd + 강한 기준 132.172 + 검출기 입력 보정 (`corrections`) — 저장소 `configs/final_crack.json`과 같은 구성 |
+| `src/preprocessing/detector_corrections.py` | 검출기 입력 보정: 연결 뒤 · 검출 앞, 노면 마스크 안에만 — 선명한 사진은 가우시안 → 막대 닫힘 → CLAHE, 아주 흐린 사진(노면 선명도 < 2.76)은 질감 처리를 건너뛰고 언샤프 3.0 · σ3 → CLAHE |
 | `data/` · `labels/` | 입력 데이터 · RDD 분할 (rdd_test 보호에 사용) |
 | `tests/` | 전처리 · 연결 시스템 테스트 |
 

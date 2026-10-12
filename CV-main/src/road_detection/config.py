@@ -7,6 +7,8 @@
     "valley_ratio": 0.35,               # (선택) 아래 값들은 null이면 detect.py 기본값
     "crack_lo_ratio": null, "crack_hi_pct": null, "link_dist": null, "line_hi_abs": null, "canny": null,
     "set": { "detect.py DEFAULT_CFG 키": 값, ... },      # 그 밖의 검출 설정 덮어쓰기
+    "corrections": { ... },             # (선택) 검출기 입력 보정 — 연결 뒤 · 검출 앞, 노면 마스크 안에만
+                                        #   (preprocessing/detector_corrections.py · configs/detection_final.json)
     "integration": {
       "input_mode": "crop_to_road" | "full",   # 검출기 입력: road_mask 외접 영역만 자름 / 영상 전체
       "crop_margin": 16,                       # crop_to_road일 때 외접 사각형 여유 (원본 화소)
@@ -25,9 +27,11 @@ from pathlib import Path
 import cv2
 
 from detect import DEFAULT_CFG
+from preprocessing.detector_corrections import validate as validate_corrections
 
 INTEGRATION_DEFAULTS = {"input_mode": "crop_to_road", "crop_margin": 16, "long_side": 1024, "min_road_overlap": 0.5, "on_fail": "skip"}
-TOP_KEYS = {"description", "detector", "valley_ratio", "crack_lo_ratio", "crack_hi_pct", "link_dist", "line_hi_abs", "canny", "set", "integration"}
+TOP_KEYS = {"description", "detector", "valley_ratio", "crack_lo_ratio", "crack_hi_pct", "link_dist", "line_hi_abs", "canny", "set", "integration",
+            "corrections"}
 
 
 class DetectionConfigError(ValueError):
@@ -90,8 +94,12 @@ def load_detection_config(path):
         raise DetectionConfigError("integration.min_road_overlap은 0~1")
     cfg = detector_cfg(raw["detector"], raw.get("valley_ratio"), raw.get("crack_lo_ratio"), raw.get("link_dist"),
                        raw.get("crack_hi_pct"), tuple(raw["canny"]) if raw.get("canny") else None, raw.get("line_hi_abs"), raw.get("set"))
+    try:
+        corrections = validate_corrections(raw.get("corrections") or {})
+    except ValueError as exc:
+        raise DetectionConfigError(f"{path.name}: {exc}") from None
     return {"name": path.stem, "description": raw.get("description", ""), "detector_name": raw["detector"],
-            "detect_cfg": cfg, "integration": integration, "needs_ximgproc": needs_ximgproc(cfg)}
+            "detect_cfg": cfg, "integration": integration, "corrections": corrections, "needs_ximgproc": needs_ximgproc(cfg)}
 
 
 def check_runtime(det):
