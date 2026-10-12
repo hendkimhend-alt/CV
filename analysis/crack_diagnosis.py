@@ -25,10 +25,10 @@ from data import list_images  # noqa: E402
 from paths import OUTPUT_DIR, imread  # noqa: E402
 
 LINE_TRACE = R.detect.__globals__["line_trace"]
-# --m3: 아주 흐린 사진(노면 선명도 < 2.76)이면 질감 처리를 건너뛰고 언샤프 σ2 · 2.0 (섞인 흐림 실험 M3, 10/12)
+# --m3: 아주 흐린 사진(노면 선명도 < 2.76)이면 질감 처리를 건너뛰고 언샤프 3.0 · σ3 (채택값, 10/12 — 이름은 실험 M3에서)
 M3 = {"gaussian": {"ksize": 3, "sigma": 0.8, "apply_to": "not_blur_rt", "blur_thr": 2.76},
       "line_close": {"length": 7, "angles": 12, "apply_to": "not_blur_rt"},
-      "unsharp": {"amount": 2.0, "sigma": 2.0, "apply_to": "blur_rt"}, "clahe": {"clip": 1.0, "tile": 8},
+      "unsharp": {"amount": 3.0, "sigma": 3.0, "apply_to": "blur_rt"}, "clahe": {"clip": 1.0, "tile": 8},
       "order": ["gaussian", "line_close", "unsharp", "clahe"]}
 TOUCH = R.detect.__globals__["_touches_border"]
 FONT = "/System/Library/Fonts/AppleSDGothicNeo.ttc"
