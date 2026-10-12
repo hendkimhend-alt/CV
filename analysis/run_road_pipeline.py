@@ -29,6 +29,7 @@ B 위에 얹는 보정 (--extra, 기본 없음 = B 그대로):
 
 실행 (저장소 맨 위 폴더에서, opencv-contrib 필요):
   python analysis/run_road_pipeline.py --note "B 재현"                                    # 563장 약 15분
+  python analysis/run_road_pipeline.py --final-config configs/final_crack.json --config-name f_final --note "최종 F"   # 균열 최종 구성
   python analysis/run_road_pipeline.py --limit 20 --no-log                                  # 빠른 확인
   python analysis/run_road_pipeline.py --cache 폴더 --note "…"                             # 전처리 · 연결 결과를 폴더에 저장 / 있으면 다시 씀
   python analysis/run_road_pipeline.py --cache 폴더 --extra '{"line_close": {"length": 11, "angles": 12}}' \
@@ -203,6 +204,7 @@ def main():
     p.add_argument("--det-config", type=Path, default=DET_CFG, help="검출 설정 (기본 CV-main/configs/detection_p2bd.json)")
     p.add_argument("--det-set", nargs="+", metavar="키=값", help="검출 설정 위에 덮어쓸 detect 설정 (예: guided_filter=…)")
     p.add_argument("--extra", default="{}", help="B 위에 얹는 보정 (JSON, 위 설명)")
+    p.add_argument("--final-config", type=Path, help="최종 구성 파일 (configs/final_crack.json) — 보정(extra)과 강한 기준(line_hi_abs)을 한 번에. --extra · --calibrate 대신")
     p.add_argument("--calibrate", action="store_true", help="강한 기준을 B의 강한 흔적 총수에 맞춤 (--cache 필요)")
     p.add_argument("--degrade", default="", help="인공 흐림 (JSON, analysis/blur_degrade.py) — 원본에 걸고 시작")
     p.add_argument("--cache", type=Path, help="전처리 · 연결 결과 저장 폴더 (있으면 다시 씀 — 같은 전처리 설정일 때만)")
@@ -221,6 +223,12 @@ def main():
     base_cfg = {**DEFAULT_CFG, **det["detect_cfg"]}
     cfg = {**base_cfg, **parse_overrides(a.det_set)}
     extra = json.loads(a.extra)
+    if a.final_config:
+        fc = json.loads(a.final_config.read_text(encoding="utf-8"))
+        extra = fc["extra"]
+        cfg["line_hi_abs"] = float(fc["line_hi_abs"])
+        if a.calibrate:
+            raise SystemExit("error:--final-config에는 맞춘 강한 기준이 들어 있음 — --calibrate와 같이 쓰지 않는다")
     deg = json.loads(a.degrade) if a.degrade else None
     name, _, images = list_images(a.dataset)
     images = images[:a.limit] if a.limit else images

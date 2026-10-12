@@ -1,0 +1,10 @@
+{
+  "description": "균열 최종 구성 F (10/11, runs.csv t_c10_post · run_20261011_072601) — B(팀원 전처리 v1.1 노면 마스크 + 연결 + 도로 위 판정 + p2bd) 위에, 노면 마스크 안에만 가우시안 σ0.8 → 막대 닫힘 7px(12방향) → CLAHE 1.0. 강한 기준은 B의 강한 흔적 총수에 맞춘 값 (개발 563장). 개발 R 0.587 · P 0.355 · F1 0.442 · 가짜 6.4개/장",
+  "extra": {
+    "gaussian": {"ksize": 3, "sigma": 0.8},
+    "line_close": {"length": 7, "angles": 12},
+    "clahe": {"clip": 1.0, "tile": 8},
+    "order": ["gaussian", "line_close", "clahe"]
+  },
+  "line_hi_abs": 132.17221069335938
+}

@@ -19,8 +19,8 @@
 
 > **B 구성 재기**: `python analysis/run_road_pipeline.py --note "…"` — `CV-main/`의 실행 코드 · 설정(`CV-main/configs/preprocessing.json` · `detection_p2bd.json`)으로 돌리고 **이 문서의 in50으로 채점**해 `runs.csv`에 남긴다 (설정 칸 `b_road`). B 위에 하나만 바꿀 때는 `--pre-config` · `--det-config`로 바꾼 설정 파일을 주고 `--config-name`을 새 이름으로.
 > **최종 구성 F 재기** (10/11, 설정 칸 `t_c10_post`):
-> `python analysis/run_road_pipeline.py --cache <캐시 폴더> --extra '{"gaussian": {"ksize": 3, "sigma": 0.8}, "line_close": {"length": 7, "angles": 12}, "clahe": {"clip": 1.0, "tile": 8}, "order": ["gaussian", "line_close", "clahe"]}' --calibrate --config-name f_final --note "…"`
-> — `--calibrate`가 강한 기준을 B의 강한 흔적 총수에 맞춘다 (개발 563장: 132.172). 순서 = 노면 마스크 → 감마(어두운 사진만) → 노면 영역 자르기 · 긴 변 1024 → [노면 안에만] 가우시안 → 막대 닫힘 → CLAHE → Hessian 선 점수 → 텐서 전파 → 중심선 → 이중 임계값 → 버리기 (길이 · 양쪽 확인 · 노면 단서 · 깊이) → 도로 위 판정
+> `python analysis/run_road_pipeline.py --final-config configs/final_crack.json --config-name f_final --note "…"`
+> — 보정 순서와 맞춘 강한 기준(132.172, B의 강한 흔적 총수에 맞춘 값)이 `configs/final_crack.json`에 들어 있다 (캐시 없이 처음부터 돌려도 됨, `--cache`를 주면 빨라짐). 순서 = 노면 마스크 → 감마(어두운 사진만) → 노면 영역 자르기 · 긴 변 1024 → [노면 안에만] 가우시안 → 막대 닫힘 → CLAHE → Hessian 선 점수 → 텐서 전파 → 중심선 → 이중 임계값 → 버리기 (길이 · 양쪽 확인 · 노면 단서 · 깊이) → 도로 위 판정
 > ⚠️ `CV-main/`의 자체 평가(`src/run_final.py` 등)는 "겹치면 적중" + ROI 밖 정답 제외라 **이 문서의 숫자와 비교할 수 없다.**
 > `CV-main/`의 전처리를 비교하려면, 그 전처리를 맨 위 `src/`의 설정(`--conditions` · `--roi` 등)으로 넣어 같은 방법으로 잰다.
 
@@ -144,7 +144,7 @@ python analysis/compare_runs.py 기준=run_A 후보=run_B --split
 
 10/10 지표 고정 때 저장된 결과로 다시 채점한 값 (검출은 다시 안 돌림). 이전 계산 P는 `runs.csv`의 `crack_precision_hit`.
 
-포트홀은 위 설정 모두 1차 방식 그대로 (개발 R ≈ 0.01 · 가짜 약 4.7개/장). 포트홀 2단계는 `configs/p2bd_pothole.json` (10/10, 담당 임경민 · `docs/pothole.md`) — 균열 결과는 그대로.
+포트홀은 모든 설정에서 개발 R ≈ 0.01 · 가짜 약 4.7개/장 (1차 방식 그대로).
 
 ## 7. 테스트 세트 (`rdd_test` 241장)
 
