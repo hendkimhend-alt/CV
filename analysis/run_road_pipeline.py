@@ -13,7 +13,7 @@ B 위에 얹는 보정 (--extra, 기본 없음 = B 그대로):
   {"line_close": {"length": 11, "angles": 12}}              막대 닫힘: 여러 방향 막대로 닫힌 결과의 최솟값
                                                              → 막대보다 짧은 어두운 점 · 줄(골재)은 메우고, 긴 어두운 선(균열)은 남김
   {"unsharp": {"amount": 1.5, "sigma": 1.0, "apply_to": "blur"}}   언샤프 (apply_to: all · blur — 흐림 = labels/split_rdd.csv 그룹, 사진만으로 정한 분류)
-  "apply_to": "blur_rt" + "blur_thr": 50                     흐림을 파이프라인이 직접 판단: 노면 마스크 안 선명도(Laplacian 분산,
+  "apply_to": "blur_rt" / "not_blur_rt" + "blur_thr": 50     흐림을 파이프라인이 직접 판단 (not_blur_rt = 흐리지 않은 사진에만, 예: 질감 처리): 노면 마스크 안 선명도(Laplacian 분산,
                                                              사진 긴 변 1024 척도) < blur_thr (1차 흐림 기준 50 — analysis/blur_judge.py)
   {"clahe": {"clip": 2.0, "tile": 8, "apply_to": "all"}}     CLAHE (Lab L 채널, apply_to: all · local_illumination 등 그룹)
   {"gamma": {"mode": "auto", "min": 0.5, "max": 2.0}}        사진마다 감마: 노면 회색 가운데값 m이 128이 되는 γ = ln 0.5 ÷ ln(m/255)
@@ -181,10 +181,10 @@ def sharpness(img, mask, geo):
 def runtime_tags(name, img, mask, geo, extra, tags_of):
     """사진의 그룹 태그 + 파이프라인이 직접 판단한 태그 (blur_rt: 노면 선명도 < blur_thr)."""
     tags = set(tags_of(name))
-    if any(isinstance(c, dict) and c.get("apply_to") == "blur_rt" for c in extra.values()):
-        thr = next(c.get("blur_thr", 50.0) for c in extra.values() if isinstance(c, dict) and c.get("apply_to") == "blur_rt")
-        if sharpness(img, mask, geo) < thr:
-            tags.add("blur_rt")
+    steps = [c for c in extra.values() if isinstance(c, dict) and c.get("apply_to") in ("blur_rt", "not_blur_rt")]
+    if steps:
+        thr = next((c["blur_thr"] for c in steps if "blur_thr" in c), 50.0)
+        tags.add("blur_rt" if sharpness(img, mask, geo) < thr else "not_blur_rt")
     return tags
 
 
@@ -295,7 +295,7 @@ def main():
             cands = detect(img, cfg)
             if pothole_cfg is not None:                  # 균열은 위 검출기, 포트홀은 포트홀 2단계 — 둘 다 같은 전처리 영상에서
                 cands = [d for d in cands if d["type"] != "pothole"] + \
-                        [d for d in texture_potholes(img, pothole_cfg) if d["type"] == "pothole"]
+                        [d for d in texture_potholes(img, pothole_cfg, mask=mask) if d["type"] == "pothole"]
             for d in cands:                              # 도로 위 판정은 균열 · 포트홀 공통
                 if road_overlap(mask, d["bbox"]) >= integ["min_road_overlap"]:
                     x, y, w, h = to_original_bbox(d["bbox"], geo)

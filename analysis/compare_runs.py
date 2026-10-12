@@ -60,6 +60,7 @@ def main():
     p.add_argument("--pick", help="조건/검출기 (실행 안에 여러 개일 때)")
     p.add_argument("--split", action="store_true", help="그룹 대신 튜닝 · 검증으로 나눠 비교 (개발 세트 실행만)")
     p.add_argument("--split-groups", action="store_true", help="--split + 튜닝 · 검증 안의 흐림 · 그림자 그룹")
+    p.add_argument("--subset", help="사진 이름 목록 파일 (한 줄에 하나) — 그 사진들 / 나머지로 나눠서도 보여 줌 (예: 인공 흐림을 건 사진)")
     p.add_argument("--n-boot", type=int, help="부트스트랩 횟수 (기본 1000, --split이면 2000)")
     p.add_argument("--seed", type=int, help="기본 20261006, --split이면 20261008")
     a = p.parse_args()
@@ -85,6 +86,13 @@ def main():
     else:
         tags = {im: row_tags(base[im]) for im in imgs}
         groups = GROUPS
+    if a.subset:
+        sub = {l.strip() for l in open(a.subset, encoding="utf-8") if l.strip()}
+        for im in imgs:
+            tags[im] = list(tags[im]) + ["목록 안" if im in sub else "목록 밖"]
+            if a.split:
+                tags[im].append(("목록 안:" if im in sub else "목록 밖:") + tags[im][0])
+        groups = tuple(groups) + ("목록 안", "목록 밖") + (("목록 안:tune", "목록 안:val") if a.split else ())
     k = a.kind
     print(f"종류 {k} · 판정 기준 in50 · 기준 = {base_name} · ✱ = 짝지은 95% 범위가 0을 포함하지 않음"
           + (" · 튜닝 · 검증으로 나눔" if a.split else ""))
