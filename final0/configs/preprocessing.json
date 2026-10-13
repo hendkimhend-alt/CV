@@ -12,7 +12,17 @@
       "gradient_sigma": 1.0,
       "texture_sigma": 2.0,
       "edge_threshold": 6.0,
-      "lightness_weight": 0.35
+      "lightness_weight": 0.35,
+      "normalize": {
+        "_comment": "사진별 정규화 (sj/roi-closeup 실험 R1): 아래 가운데(행 0.6~1 · 열 0.25~0.75)의 기울기 · 질감 중앙값을 ref 값에 맞추는 배율을 곱함 (factor_range로 자름). ref = 개발 튜닝 394장 중앙값의 중앙. 둘 다 false면 이전과 같음",
+        "gradient": false,
+        "texture": false,
+        "ref_gradient": 0.7743,
+        "ref_texture": 16.0391,
+        "ref_rows": [0.6, 1.0],
+        "ref_cols": [0.25, 0.75],
+        "factor_range": [0.25, 4.0]
+      }
     },
     "grid": {
       "cell_size": 32,

@@ -205,13 +205,14 @@ def main():
     p.add_argument("--out", type=Path, default=RESULT_DIR, help="결과 폴더 (기본 final-result/) — 그 아래 run_<시각>/")
     p.add_argument("--no-images", action="store_true", help="그림(결과 · 노면 마스크 · 전처리 영상)을 저장하지 않음 (CSV만)")
     p.add_argument("--note", default="")
+    p.add_argument("--pre-set", nargs="*", default=[], help="전처리 설정 덮어쓰기 (예 roi.features.normalize.gradient=true)")
     a = p.parse_args()
     if a.dataset in PROTECTED and not a.allow_rdd_test:
         raise SystemExit(f"error:{a.dataset}에는 테스트 세트가 들어 있음 — --allow-rdd-test로만 (최종 확인용)")
     if a.gt and not a.gt.exists():
         raise SystemExit(f"error:정답 파일 없음 {a.gt}")
 
-    pre_cfg, det = load_config(PRE_CFG), load_detection_config(DET_CFG)
+    pre_cfg, det = load_config(PRE_CFG, a.pre_set), load_detection_config(DET_CFG)
     check_runtime(det)
     pc = json.loads(POT_CFG.read_text(encoding="utf-8"))["pothole"]
     unknown = set(pc) - set(POTHOLE_DEFAULTS)
@@ -313,7 +314,7 @@ def main():
         w.writeheader()
         w.writerows(summary)
     json.dump({"dataset": name, "limit": a.limit, "gt": gt_source, "preprocessing_config": PRE_CFG.name,
-               "preprocessing_hash": config_hash(pre_cfg), "detection_config": DET_CFG.name,
+               "preprocessing_hash": config_hash(pre_cfg), "pre_set": a.pre_set, "detection_config": DET_CFG.name,
                "detect_cfg": det["detect_cfg"], "corrections": det["corrections"], "integration": det["integration"],
                "pothole": {k: v for k, v in pothole_cfg.items() if k.startswith("pothole")},
                "summary": summary, "note": a.note},

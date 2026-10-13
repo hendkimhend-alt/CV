@@ -58,6 +58,18 @@ def compute_feature_maps(bgr, cfg_features):
     laplacian = np.abs(cv2.Laplacian(raw_l, cv2.CV_32F, ksize=3, borderType=cv2.BORDER_REFLECT_101))
     texture = cv2.GaussianBlur(laplacian, (0, 0), cfg_features["texture_sigma"],
                                borderType=cv2.BORDER_REFLECT_101)
+    norm = cfg_features.get("normalize")
+    if norm and (norm["gradient"] or norm["texture"]):
+        # 촬영 조건(거리 · 흐림 · 어두움)에 따라 기울기 · 질감 값이 사진 전체로 이동 → 아래 가운데(보통 노면)의 중앙값을
+        # 개발 세트의 전형값에 맞춰 사진마다 배율을 곱함. 이후 고정 기준(경계 6 · 벽 5 · 질감 2~45)은 그대로
+        height, width = gradient.shape
+        (r0, r1), (c0, c1) = norm["ref_rows"], norm["ref_cols"]
+        region = (slice(int(r0 * height), int(r1 * height)), slice(int(c0 * width), int(c1 * width)))
+        lo, hi = norm["factor_range"]
+        if norm["gradient"]:
+            gradient = gradient * float(np.clip(norm["ref_gradient"] / max(float(np.median(gradient[region])), 1e-6), lo, hi))
+        if norm["texture"]:
+            texture = texture * float(np.clip(norm["ref_texture"] / max(float(np.median(texture[region])), 1e-6), lo, hi))
     return FeatureMaps(lab=lab, gradient=gradient.astype(np.float32), texture=texture.astype(np.float32))
 
 
