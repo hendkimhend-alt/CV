@@ -1,0 +1,9 @@
+{
+  "description": "포트홀 최종 (10/12) — 거칠기로 찾기(주변 노면 고리 비 > 1.8) → 버리기(색도 차 · 어두운 10% · 세장비 · 노면 색 ≤ 2.0 · 높이 ≥ 0.4). 저장소 configs/final.json의 \"pothole\" 그대로. 나머지 값은 src/pothole.py POTHOLE_DEFAULTS. 개발 563장 39/94 · R 0.415 · P 0.044 · 가짜 2.0개/장",
+  "pothole": {
+    "pothole_find": "ring",
+    "pothole_ring_ratio": 1.8,
+    "pothole_road_color_max": 2.0,
+    "pothole_min_rel_y": 0.4
+  }
+}
