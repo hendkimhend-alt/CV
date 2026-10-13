@@ -1,0 +1,39 @@
+{
+  "description": "최종 (10/12) — 사진 한 장을 같은 전처리(노면 마스크 · 노면 영역 자르기 · 가우시안 σ0.8 → 막대 닫힘 7px → CLAHE 1.0)에 넣고, 균열은 p2bd 검출기(configs/final_crack.json과 같음), 포트홀은 포트홀 2단계(임경민, docs/pothole.md · configs/p2bd_pothole.json의 포트홀 설정)로 따로 찾은 뒤 (포트홀 찾기는 주변 노면 고리 비, 10/12), 도로 위 판정을 공통으로 건다 · 흐림 대응 (10/12): 아주 흐린 사진(노면 선명도 < 2.76)은 질감 처리를 건너뛰고 언샤프 3.0 · σ3 → CLAHE (실험 기록 results/experiments.md 8단계 — 섞인 흐림에서 아주 흐린 사진 R 0.047 → 0.299, 깨끗한 개발 563장은 그대로)",
+  "extra": {
+    "gaussian": {
+      "ksize": 3,
+      "sigma": 0.8,
+      "apply_to": "not_blur_rt",
+      "blur_thr": 2.76
+    },
+    "line_close": {
+      "length": 7,
+      "angles": 12,
+      "apply_to": "not_blur_rt"
+    },
+    "unsharp": {
+      "amount": 3.0,
+      "sigma": 3.0,
+      "apply_to": "blur_rt"
+    },
+    "clahe": {
+      "clip": 1.0,
+      "tile": 8
+    },
+    "order": [
+      "gaussian",
+      "line_close",
+      "unsharp",
+      "clahe"
+    ]
+  },
+  "line_hi_abs": 132.17221069335938,
+  "pothole": {
+    "pothole_method": "texture",
+    "pothole_find": "ring",
+    "pothole_ring_ratio": 1.8,
+    "pothole_road_color_max": 2.0,
+    "pothole_min_rel_y": 0.4
+  }
+}

@@ -6,13 +6,12 @@ detect(img, cfg) -> list[{bbox, type, area, length, width, elong, contrast, bran
 입력 img는 A의 preprocess() 출력(노면 ROI + 긴 변 1024 정규화)을 가정한다.
 혼자 돌릴 때는 run_detect.py의 prepare()가 같은 처리를 해 준다.
 
-- D0 (비교 기준): Canny → Closing
 - D1: 균열 branch   Black-hat(작은 커널) → [선 열림] → 이중 임계값 → Closing → [조각 잇기]
       포트홀 branch Adaptive Threshold(큰 블록) → Opening
-- 공통: 연결 요소 → [가까운 조각 묶기] → 형태 특징 → 규칙으로 crack / pothole / noise → [가장자리 제외]
+- 공통: 연결 요소 → 형태 특징 → 규칙으로 crack / pothole / noise → [가장자리 제외]
         → [양쪽 확인: 균열 후보가 "양쪽 주변보다 모두" 어두운가 — 한쪽만 밝은 계단(그림자 경계 · 차선 옆)은 noise]
 
-[ ]는 cfg로 켜고 끄는 단계. 기본값: 가장자리 제외만 켜짐. 선 열림·조각 묶기는 RDD 평가에서 효과가 없어 꺼 둠
+[ ]는 cfg로 켜고 끄는 단계. 기본값: 가장자리 제외만 켜짐. 선 열림은 RDD 평가에서 효과가 없어 꺼 둠
 (재현용으로 남김 — analysis/eval_detector.py). 계획서 원안(adaptive threshold)은 crack_thresh="adaptive"로 재현 가능.
 bbox는 (x, y, w, h), 입력 img 좌표계 기준.
 """
@@ -20,13 +19,9 @@ import cv2
 import numpy as np
 
 DEFAULT_CFG = {
-    "detector": "D1",            # "D0" | "D1"
+    "detector": "D1",            # "D1"만 (Canny 비교 기준 D0는 10/13 정리)
     "keep_noise": False,         # True면 noise 판정 후보도 반환
 
-    # D0
-    "canny_low": 50,
-    "canny_high": 150,
-    "d0_close_ksize": 5,
 
     # D1 균열 branch
     "blackhat_ksize": 7,         # 균열 폭(2~3px)보다 크고 그림자 띠보다 작게 [L4]. 15는 그림자 띠까지 잡음
@@ -48,12 +43,10 @@ DEFAULT_CFG = {
     "pothole_open_ksize": 9,
 
     # 덩어리
-    "group_ksize": 0,            # [실험, 효과 없음] >0이면 이 거리 안의 조각을 한 후보로 묶음 (모양은 원래 픽셀로 잼)
 
     # 규칙
     "min_area_ratio": 0.0002,    # 이보다 작으면 noise
     "crack_min_elong": 3.0,      # 세장비 ≥ 이 값 → crack
-    "crack_min_contrast": 0.0,   # 덩어리 평균 Black-hat / 강한 기준 ≥ 이 값 → crack (0 = 끔)
     "pothole_min_area_ratio": 0.002,
     "pothole_max_elong": 3.0,    # 세장비 < 이 값 + 면적 충분 → pothole
     "drop_border": "t",          # 이 변에 닿는 후보 버림: "t"(위) "b"(아래) "l"(왼) "r"(오른) 조합.
@@ -93,7 +86,6 @@ DEFAULT_CFG = {
 
     # 구조장 전파 (논문 반영 2단계 — Chen et al. 2021 아이디어를 참고해 직접 설계): 0 = 끔, n = 반복 횟수
     # 방향을 prop_bins칸으로 나눠 각 칸을 가리키는 점의 점수를 그 방향으로 길쭉한 가우시안(prop_len × prop_width)으로 퍼뜨려 더함
-    "line_propagate": 0, "prop_len": 7.0, "prop_width": 1.0, "prop_bins": 12,
     # 여러 크기 합치기: "max"(지금) · "mean"(논문 §3.2)
     "line_scale_combine": "max",
     # 논문식 텐서 전파 (§4 식 12~16): 0 = 끔, n = 반복 횟수 · 타원 σ_ma(긴 축) × σ_mi(짧은 축) · 방향 칸 수
@@ -105,7 +97,6 @@ DEFAULT_CFG = {
     # 가이드 필터 (Chen et al. 2021 §2): 찾기 입력에만. None = 끔 · {"r": 반지름, "eps": "std" | "var" | 숫자, "eps_scale": 배수}
     "guided_filter": None,
     # 중심선 NMS: False = 4방향으로 묶어서 (지금) · True = 연속 방향 보간 (논문 §5.1)
-    "nms_interp": False,   # True: 찾기 점수 = 선 점수 × 전파 세기, 중심선은 원래 방향 (논문 §5.1 "곡선 띠 안의 중심")
 }
 
 
@@ -114,9 +105,7 @@ def detect(img, cfg=None):
     gray = _to_gray(img)
     H, W = gray.shape
 
-    if cfg["detector"] == "D0":
-        branches = [("any", _d0_mask(gray, cfg), None, None)]
-    elif cfg["detector"] == "D1":
+    if cfg["detector"] == "D1":
         mask, bh, hi = _crack_mask(gray, cfg)
         branches = [("crack", mask, bh, hi), ("pothole", _pothole_mask(gray, cfg), None, None)]
     else:
@@ -137,7 +126,7 @@ def detect(img, cfg=None):
         if need_on and smooth is None:
             smooth = cv2.GaussianBlur(gray, (3, 3), 0).astype(np.float32)
     for branch, mask, bh, hi in branches:
-        for pts in _components(mask, cfg["group_ksize"]):
+        for pts in _components(mask):
             det = shape_features(pts, bh, hi)
             det["type"] = classify(det, H * W, branch, cfg)
             det["branch"] = branch
@@ -168,11 +157,6 @@ def detect(img, cfg=None):
 
 
 # ---------- 마스크 ----------
-
-def _d0_mask(gray, cfg):
-    edges = cv2.Canny(gray, cfg["canny_low"], cfg["canny_high"])
-    return cv2.morphologyEx(edges, cv2.MORPH_CLOSE, _kernel(cfg["d0_close_ksize"]))
-
 
 def _crack_mask(gray, cfg, with_angle=False):
     """→ (흑백 흔적, 점수 지도, 강한 기준) · with_angle=True면 끝에 방향 지도(선을 가로지르는 방향, 라디안)도 — 선 모양 찾기에서만."""
@@ -339,18 +323,6 @@ def line_centerline(score, angle):
     return np.where(keep & (c > 0), c, 0).astype(np.float32)
 
 
-def line_centerline_interp(score, angle):
-    """선 중심만 남기기 — 연속 방향 (Chen et al. 2021 §5.1 "균열에 수직인 방향"): 선을 가로지르는 방향으로 ±1px 떨어진
-    두 점의 점수를 쌍선형 보간으로 구해, 둘보다 작지 않은 점만 (4방향으로 묶지 않음)."""
-    H, W = score.shape
-    yy, xx = np.mgrid[0:H, 0:W].astype(np.float32)
-    c, s = np.cos(angle).astype(np.float32), np.sin(angle).astype(np.float32)
-    a = cv2.remap(score, xx + c, yy + s, cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=0)
-    b = cv2.remap(score, xx - c, yy - s, cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=0)
-    keep = (score >= a) & (score >= b) & (score > 0)
-    return np.where(keep, score, 0).astype(np.float32)
-
-
 def seeded(weak, strong):
     """이중 임계값: 약한 픽셀 중 강한 픽셀과 이어진 덩어리만 살림."""
     n, labels = cv2.connectedComponents(weak.astype(np.uint8), connectivity=8)
@@ -377,21 +349,6 @@ def _prop_kernels(n, length, width):
             ks.append((phi, r / r.sum()))
         _PROP_KERNELS[key] = ks
     return _PROP_KERNELS[key]
-
-
-def propagate(score, angle, cfg):
-    """구조장 전파: 각 점이 자기 방향 앞뒤로 점수를 나눠 줌 → 같은 방향으로 늘어선 점끼리 강해지고 끊긴 곳이 채워짐.
-    angle = 선을 가로지르는 방향(line_score) → 선이 뻗는 방향 θ = angle + 90°. cos⁸(θ − φ)로 각 칸에 나눠 담음."""
-    theta = angle + np.pi / 2
-    s = score.astype(np.float32)
-    ks = _prop_kernels(cfg["prop_bins"], cfg["prop_len"], cfg["prop_width"])
-    weights = [np.cos(theta - phi) ** 8 for phi, _ in ks]
-    for _ in range(cfg["line_propagate"]):
-        out = np.zeros_like(s)
-        for w, (_, k) in zip(weights, ks):
-            out += cv2.filter2D(s * w, -1, k, borderType=cv2.BORDER_REFLECT)
-        s = out
-    return s
 
 
 def tensor_propagate(score, angle, cfg):
@@ -441,7 +398,7 @@ def line_trace(gray, cfg, hi_pct=None, with_angle=False):
     with_angle=True면 방향 지도도 돌려줌 (가장 센 σ에서 λ1 고유벡터 = 선을 가로지르는 방향, 연속 라디안 —
     선이 뻗는 방향은 여기에 +90°). NMS 뒤에도 방향을 버리지 않기 위함 (논문 반영 0단계)."""
     score, angle = line_score(find_input(gray, cfg), cfg["line_sigmas"], cfg.get("line_scale_combine", "max"))
-    nms = line_centerline_interp if cfg.get("nms_interp", False) else line_centerline
+    nms = line_centerline
     if cfg.get("tensor_propagate", 0) > 0:
         field, nangle = tensor_propagate(score, angle, cfg)
         if cfg.get("tensor_gate", False):                       # P2-b: 전파는 띠(지지)로만, 중심선은 원래 점수 · 방향으로
@@ -449,8 +406,7 @@ def line_trace(gray, cfg, hi_pct=None, with_angle=False):
         else:
             center = nms(field, nangle)
     else:
-        field = propagate(score, angle, cfg) if cfg.get("line_propagate", 0) > 0 else score
-        center = nms(field, angle)
+        center = nms(score, angle)
     if cfg["line_hi_abs"] is not None and hi_pct is None:
         hi = float(cfg["line_hi_abs"])
     else:
@@ -470,11 +426,10 @@ def _pothole_mask(gray, cfg):
 
 # ---------- 덩어리 ----------
 
-def _components(mask, group_ksize=0):
+def _components(mask):
     """흰 픽셀을 연결 요소 [2-1]로 묶어 덩어리별 (x, y) 좌표 배열 목록으로."""
-    grouping = cv2.dilate(mask, _kernel(group_ksize)) if group_ksize > 0 else mask
-    n, labels = cv2.connectedComponents((grouping > 0).astype(np.uint8), connectivity=8)
-    ys, xs = np.nonzero(mask)               # 묶음은 넓힌 마스크로, 모양은 원래 픽셀로
+    n, labels = cv2.connectedComponents((mask > 0).astype(np.uint8), connectivity=8)
+    ys, xs = np.nonzero(mask)
     lab = labels[ys, xs]
     order = np.argsort(lab, kind="stable")
     lab, pts = lab[order], np.stack([xs[order], ys[order]], axis=1).astype(np.int32)
@@ -504,12 +459,11 @@ def classify(det, img_area, branch, cfg):
             return "noise"
     elif area_ratio < cfg["min_area_ratio"]:
         return "noise"
-    # 규칙 1: 세장비 (+ 진하기)
-    if (branch in ("crack", "any") and det["elong"] >= cfg["crack_min_elong"]
-            and det["contrast"] >= cfg["crack_min_contrast"]):
+    # 규칙 1: 세장비
+    if branch == "crack" and det["elong"] >= cfg["crack_min_elong"]:
         return "crack"
     # 규칙 2: 면적
-    if (branch in ("pothole", "any") and area_ratio >= cfg["pothole_min_area_ratio"]
+    if (branch == "pothole" and area_ratio >= cfg["pothole_min_area_ratio"]
             and det["elong"] < cfg["pothole_max_elong"]):
         return "pothole"
     return "noise"

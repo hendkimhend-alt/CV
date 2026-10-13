@@ -13,16 +13,10 @@ B 위에 얹는 보정 (--extra, 기본 없음 = B 그대로):
   {"line_close": {"length": 11, "angles": 12}}              막대 닫힘: 여러 방향 막대로 닫힌 결과의 최솟값
                                                              → 막대보다 짧은 어두운 점 · 줄(골재)은 메우고, 긴 어두운 선(균열)은 남김
   {"unsharp": {"amount": 1.5, "sigma": 1.0, "apply_to": "blur"}}   언샤프 (apply_to: all · blur — 흐림 = labels/split_rdd.csv 그룹, 사진만으로 정한 분류)
-  "apply_to": "blur_rt" + "blur_thr": 50                     흐림을 파이프라인이 직접 판단: 노면 마스크 안 선명도(Laplacian 분산,
+  "apply_to": "blur_rt" / "not_blur_rt" + "blur_thr": 50     흐림을 파이프라인이 직접 판단 (not_blur_rt = 흐리지 않은 사진에만, 예: 질감 처리): 노면 마스크 안 선명도(Laplacian 분산,
                                                              사진 긴 변 1024 척도) < blur_thr (1차 흐림 기준 50 — analysis/blur_judge.py)
   {"clahe": {"clip": 2.0, "tile": 8, "apply_to": "all"}}     CLAHE (Lab L 채널, apply_to: all · local_illumination 등 그룹)
-  {"gamma": {"mode": "auto", "min": 0.5, "max": 2.0}}        사진마다 감마: 노면 회색 가운데값 m이 128이 되는 γ = ln 0.5 ÷ ln(m/255)
-                                                             (auto_dark = γ ≤ 1만, 어두운 사진만 밝게 · fixed = "value")
-  {"harris_adapt": {"win": 31, "thr": 2.0, "strong": {…질감 처리…}}}
-                                                             거친 곳만 더 세게: Harris 코너 세기(수업 3-2)를 창(win)으로 평균 내 사진 노면의 중앙값으로 나눈 값이
-                                                             thr 이상인 노면은 "strong" 질감 처리 결과로 바꿈 (판단은 보정 전 입력으로 · thr는 정답 없이
-                                                             노면 분포의 분위수로 정함 — analysis/harris_density.py)
-  여러 개를 함께 쓰면 "order"의 순서로 (기본 감마 → CLAHE → 가우시안 → 막대 닫힘 → 언샤프),
+  여러 개를 함께 쓰면 "order"의 순서로 (기본 CLAHE → 가우시안 → 막대 닫힘 → 언샤프 · 감마 · Harris 단계는 10/13 정리),
   예: {"line_close": …, "gaussian": …, "order": ["line_close", "gaussian"]} · 모든 단계에 "apply_to" 가능 (기본 all)
   보정은 Hessian 점수 크기를 바꾸므로 --calibrate로 강한 기준을 다시 맞춘다:
   B 그대로일 때 강한 흔적(중심선 ≥ 128.609375) 총수와 같아지는 값 (사진만 씀, 정답 안 봄 — analysis/calibrate.py와 같은 원리)
@@ -30,6 +24,7 @@ B 위에 얹는 보정 (--extra, 기본 없음 = B 그대로):
 실행 (저장소 맨 위 폴더에서, opencv-contrib 필요):
   python analysis/run_road_pipeline.py --note "B 재현"                                    # 563장 약 15분
   python analysis/run_road_pipeline.py --final-config configs/final_crack.json --config-name f_final --note "최종 F"   # 균열 최종 구성
+  python analysis/run_road_pipeline.py --final-config configs/final.json --config-name final --note "최종"         # 균열 + 포트홀 (같은 전처리 · 검출기만 따로)
   python analysis/run_road_pipeline.py --limit 20 --no-log                                  # 빠른 확인
   python analysis/run_road_pipeline.py --cache 폴더 --note "…"                             # 전처리 · 연결 결과를 폴더에 저장 / 있으면 다시 씀
   python analysis/run_road_pipeline.py --cache 폴더 --extra '{"line_close": {"length": 11, "angles": 12}}' \
@@ -57,9 +52,10 @@ MAIN = ROOT / "CV-main"
 SHARED = ("paths", "data", "evaluate", "preprocess", "roi", "detect", "roadcue")
 sys.path.insert(0, str(MAIN / "src"))
 from detect import (DEFAULT_CFG, _line_kernel, _to_gray, detect, find_input, line_centerline,  # noqa: E402
-                    line_centerline_interp, line_score, tensor_propagate)
+                    line_score, tensor_propagate)
 from preprocessing.config import config_hash, load_config  # noqa: E402
 from preprocessing.detector_adapter import to_detector_input, to_original_bbox  # noqa: E402
+from preprocessing.detector_corrections import apply_corrections, judge_tags, road_sharpness  # noqa: E402
 from preprocessing.pipeline import MANUAL_REQUIRED, SUCCESS, process_image  # noqa: E402
 from road_detection.config import check_runtime, load_detection_config  # noqa: E402
 from road_detection.pipeline import road_overlap  # noqa: E402
@@ -71,6 +67,8 @@ from data import list_images, load_gt, load_viewpoints  # noqa: E402
 from evaluate import CRITERIA, KINDS, evaluate  # noqa: E402
 from paths import OUTPUT_DIR, imread  # noqa: E402
 from run_pipeline import git_version, log_run, new_run_dir, parse_overrides  # noqa: E402
+from detect import DEFAULT_CFG as POTHOLE_BASE_CFG  # noqa: E402  (맨 위 src/ — 포트홀 2단계 설정 기본값)
+from pothole import texture_potholes  # noqa: E402  (포트홀 2단계, 임경민 · docs/pothole.md)
 sys.path.insert(0, str(ROOT / "analysis"))
 from blur_degrade import degrade  # noqa: E402
 
@@ -119,70 +117,19 @@ def prepare(path, pre_cfg, det, cache, degrade_spec=None):
 
 
 def apply_extra(img, mask, extra, tags):
-    """B 위에 얹는 보정 — 검출기 입력에서 노면 마스크 안에만, extra["order"] 순서로. → (영상, 적용했나)"""
-    out, applied = img, False
-    for step in extra.get("order", ("gamma", "clahe", "gaussian", "line_close", "unsharp")):
-        if step not in extra:
-            continue
-        c = extra[step]
-        if c.get("apply_to", "all") != "all" and c["apply_to"] not in tags:
-            continue
-        if step == "gamma":
-            if c["mode"] == "fixed":
-                g = float(c["value"])
-            else:
-                gray = cv2.cvtColor(out, cv2.COLOR_BGR2GRAY)
-                m = float(np.clip(np.median(gray[mask > 0]) if np.any(mask > 0) else np.median(gray), 1, 254))
-                g = float(np.clip(np.log(0.5) / np.log(m / 255.0), c.get("min", 0.5), c.get("max", 2.0)))
-                g = min(g, 1.0) if c["mode"] == "auto_dark" else g
-            out = cv2.LUT(out, np.rint(255.0 * (np.arange(256) / 255.0) ** g).astype(np.uint8))
-        elif step == "clahe":
-            lab = cv2.cvtColor(out, cv2.COLOR_BGR2LAB)
-            lab[:, :, 0] = cv2.createCLAHE(clipLimit=c["clip"], tileGridSize=(c.get("tile", 8),) * 2).apply(lab[:, :, 0])
-            out = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
-        elif step == "gaussian":
-            out = cv2.GaussianBlur(out, (c["ksize"], c["ksize"]), c["sigma"], borderType=cv2.BORDER_REFLECT_101)
-        elif step == "line_close":
-            closed = [cv2.morphologyEx(out, cv2.MORPH_CLOSE, _line_kernel(c["length"], 180.0 * i / c["angles"]),
-                                       borderType=cv2.BORDER_REPLICATE) for i in range(c["angles"])]
-            out = np.min(np.stack(closed), axis=0)
-        elif step == "harris_adapt":
-            resp = cv2.cornerHarris(cv2.cvtColor(img, cv2.COLOR_BGR2GRAY).astype(np.float32), 2, 3, 0.04)
-            energy = cv2.boxFilter(np.maximum(resp, 0), -1, (c["win"], c["win"]))
-            energy /= max(float(np.median(energy[mask > 0])) if np.any(mask > 0) else 1.0, 1e-9)
-            rough = (energy >= c["thr"]) & (mask > 0)
-            strong, _ = apply_extra(img, mask, c["strong"], tags)
-            out = np.where(rough[..., None], strong, out)
-        elif step == "unsharp":
-            src = out.astype(np.float32)
-            blur = cv2.GaussianBlur(src, (0, 0), c["sigma"], borderType=cv2.BORDER_REFLECT_101)
-            out = np.rint(np.clip(src + c["amount"] * (src - blur), 0, 255)).astype(np.uint8)
-        else:
-            raise SystemExit(f"error:모르는 보정 {step}")
-        applied = True
-    if not applied:
-        return img, False
-    return np.where((mask > 0)[..., None], out, img).astype(np.uint8), True
+    """B 위에 얹는 보정 — 검출기 입력에서 노면 마스크 안에만, extra["order"] 순서로. → (영상, 적용했나)
+    실제 코드는 CV-main/src/preprocessing/detector_corrections.py (정식 실행 경로와 같은 함수)."""
+    return apply_corrections(img, mask, extra, tags)
 
 
 def sharpness(img, mask, geo):
-    """노면 마스크(5×5로 깎음) 안 회색의 Laplacian 분산 — 사진 전체 긴 변을 1024로 맞춘 척도 (팀원 품질 측정 · 1차 흐림 분류와 같은 척도)."""
-    f = (1024.0 / max(geo["original_width"], geo["original_height"])) / geo["scale_x"]
-    size = (max(1, round(img.shape[1] * f)), max(1, round(img.shape[0] * f)))
-    g = cv2.resize(cv2.cvtColor(img, cv2.COLOR_BGR2GRAY), size, interpolation=cv2.INTER_AREA if f < 1 else cv2.INTER_LINEAR)
-    m = cv2.erode((cv2.resize(mask, size, interpolation=cv2.INTER_NEAREST) > 0).astype(np.uint8), np.ones((5, 5), np.uint8)) > 0
-    lap = cv2.Laplacian(g, cv2.CV_64F, ksize=1)
-    return float(lap[m].var()) if m.sum() > 100 else float(lap.var())
+    """노면 마스크 안 선명도 — detector_corrections.road_sharpness."""
+    return road_sharpness(img, mask, geo)
 
 
 def runtime_tags(name, img, mask, geo, extra, tags_of):
     """사진의 그룹 태그 + 파이프라인이 직접 판단한 태그 (blur_rt: 노면 선명도 < blur_thr)."""
-    tags = set(tags_of(name))
-    if any(isinstance(c, dict) and c.get("apply_to") == "blur_rt" for c in extra.values()):
-        thr = next(c.get("blur_thr", 50.0) for c in extra.values() if isinstance(c, dict) and c.get("apply_to") == "blur_rt")
-        if sharpness(img, mask, geo) < thr:
-            tags.add("blur_rt")
-    return tags
+    return judge_tags(img, mask, geo, extra, tags_of(name))
 
 
 def center_map(img, cfg):
@@ -191,7 +138,7 @@ def center_map(img, cfg):
     if cfg.get("tensor_propagate", 0) > 0:
         field, nangle = tensor_propagate(score, angle, cfg)
         score, angle = (score * field, angle) if cfg.get("tensor_gate", False) else (field, nangle)
-    nms = line_centerline_interp if cfg.get("nms_interp", False) else line_centerline
+    nms = line_centerline
     return nms(score, angle)
 
 
@@ -223,10 +170,13 @@ def main():
     base_cfg = {**DEFAULT_CFG, **det["detect_cfg"]}
     cfg = {**base_cfg, **parse_overrides(a.det_set)}
     extra = json.loads(a.extra)
+    pothole_cfg = None
     if a.final_config:
         fc = json.loads(a.final_config.read_text(encoding="utf-8"))
         extra = fc["extra"]
         cfg["line_hi_abs"] = float(fc["line_hi_abs"])
+        if "pothole" in fc:                              # 같은 전처리 위에서 포트홀 검출기를 따로 (1차 포트홀 대신)
+            pothole_cfg = {**POTHOLE_BASE_CFG, **fc["pothole"]}
         if a.calibrate:
             raise SystemExit("error:--final-config에는 맞춘 강한 기준이 들어 있음 — --calibrate와 같이 쓰지 않는다")
     deg = json.loads(a.degrade) if a.degrade else None
@@ -286,7 +236,11 @@ def main():
         dets, applied = [], False
         if img is not None:
             img, applied = apply_extra(img, mask, extra, runtime_tags(path.name, img, mask, geo, extra, tags_of))
-            for d in detect(img, cfg):
+            cands = detect(img, cfg)
+            if pothole_cfg is not None:                  # 균열은 위 검출기, 포트홀은 포트홀 2단계 — 둘 다 같은 전처리 영상에서
+                cands = [d for d in cands if d["type"] != "pothole"] + \
+                        [d for d in texture_potholes(img, pothole_cfg, mask=mask) if d["type"] == "pothole"]
+            for d in cands:                              # 도로 위 판정은 균열 · 포트홀 공통
                 if road_overlap(mask, d["bbox"]) >= integ["min_road_overlap"]:
                     x, y, w, h = to_original_bbox(d["bbox"], geo)
                     dets.append({"type": d["type"], "bbox": [round(x, 1), round(y, 1), round(w, 1), round(h, 1)]})
@@ -316,7 +270,8 @@ def main():
     json.dump(dets_all, open(run_dir / "detections.json", "w"))
     json.dump({"dataset": a.dataset, "limit": a.limit, "preprocessing_config": str(pre_path.relative_to(ROOT)),
                "preprocessing_hash": config_hash(pre_cfg), "detection_config": str(det_path.relative_to(ROOT)),
-               "det_set": a.det_set, "extra": extra, "degrade": deg, "line_hi_abs": hi_used, "calibrated": a.calibrate,
+               "det_set": a.det_set, "extra": extra,
+               "pothole": None if pothole_cfg is None else {k: v for k, v in pothole_cfg.items() if k.startswith("pothole")}, "degrade": deg, "line_hi_abs": hi_used, "calibrated": a.calibrate,
                "code": git_version(), "note": a.note}, open(run_dir / "run_config.json", "w"), ensure_ascii=False, indent=2)
     n_unv = sum(r["unverified_mask"] for r in rows)
     print(f"상태: { {s: sum(r['status'] == s for r in rows) for s in dict.fromkeys(r['status'] for r in rows)} }"

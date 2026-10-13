@@ -9,6 +9,8 @@
   {"kind": "gauss",  "k": …}  초점 흐림: 가우시안 σ = k × (긴 변 / 1024)
   {"kind": "motion", "k": …}  흔들림: 길이 L = k × (긴 변 / 1024) 의 직선 커널, 방향은 사진마다 고정 난수 (seed = 파일 이름)
   → 해상도가 달라도 같은 정도로 흐려지게 긴 변에 비례
+  {"kind": "mixed", "frac": 0.25, "ks": [2, 3.5]}  섞인 흐림: 사진의 frac만 (파일 이름 해시로 고정) 가우시안, k는 ks 중 하나
+  → 실제처럼 "대부분 선명 · 일부 흐림"이고 강한 기준은 선명한 사진에 맞춘 값 그대로일 때를 재현
 세기 고르기: python analysis/blur_degrade.py --calibrate → 개발 세트 표본에서 선명도 중앙값이 1차 흐림 4장 범위(3 ~ 6)의
   가운데(약 4.5)가 되는 k (정답 안 봄)
 쓰는 곳: python analysis/run_road_pipeline.py --degrade '{"kind": "gauss", "k": …}' --cache <흐림 전용 캐시> …
@@ -26,9 +28,20 @@ sys.path.insert(0, str(ROOT / "src"))
 TARGET = 4.5     # 1차 계획서 제공 흐림 4장의 선명도 3 ~ 6 의 가운데
 
 
+def blurred_in_mixed(name, spec):
+    """섞인 흐림에서 이 사진이 흐려지는가 · 어떤 k인가 (파일 이름 해시로 고정)."""
+    h = int(hashlib.md5(("mixed:" + name).encode()).hexdigest(), 16)
+    if (h % 10000) / 10000 >= spec["frac"]:
+        return None
+    return spec["ks"][(h // 10000) % len(spec["ks"])]
+
+
 def degrade(img, spec, name=""):
     if not spec:
         return img
+    if spec["kind"] == "mixed":
+        k = blurred_in_mixed(name, spec)
+        return img if k is None else degrade(img, {"kind": "gauss", "k": k}, name)
     s = spec["k"] * max(img.shape[:2]) / 1024.0
     if spec["kind"] == "gauss":
         return cv2.GaussianBlur(img, (0, 0), s, borderType=cv2.BORDER_REFLECT_101)

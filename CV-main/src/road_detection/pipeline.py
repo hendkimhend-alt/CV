@@ -2,6 +2,7 @@
 
   입력 영상 → [전처리] 자동 Road Mask → PASS/FAIL → (수동 마스크) → analysis_mask → 조건부 Gamma · Gaussian
             → [연결] road_mask 외접 영역 자르기 · 긴 변 1024 (detector_adapter)
+            → [검출기 입력 보정] 설정에 corrections가 있으면 노면 마스크 안에만 (detector_corrections — 질감 처리 · 흐림 대응 · CLAHE)
             → [검출] detect() — 알고리즘 변경 없음
             → [연결] 후보 박스가 road_mask 위에 있는지 판정 (min_road_overlap) · 원본 좌표로 되돌림
             → 결과 (전처리 결과 + 후보 목록)
@@ -17,6 +18,7 @@ import numpy as np
 
 from detect import detect
 from preprocessing.detector_adapter import to_detector_input, to_original_bbox
+from preprocessing.detector_corrections import apply_corrections, judge_tags
 from preprocessing.pipeline import MANUAL_REQUIRED, SUCCESS, process_image
 
 KINDS = ("crack", "pothole")
@@ -39,6 +41,9 @@ def detect_on_road(processed_image, road_mask, det):
     det_img, det_mask, geometry = to_detector_input(processed_image, road_mask, integ["long_side"],
                                                     crop_to_road=integ["input_mode"] == "crop_to_road",
                                                     crop_margin=integ["crop_margin"])
+    corr = det.get("corrections") or {}
+    if corr:
+        det_img, _ = apply_corrections(det_img, det_mask, corr, judge_tags(det_img, det_mask, geometry, corr))
     raw = detect(det_img, det["detect_cfg"])
     elapsed = (time.perf_counter() - t0) * 1000
     candidates = []

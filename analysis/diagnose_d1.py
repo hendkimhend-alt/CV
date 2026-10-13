@@ -65,7 +65,7 @@ def candidates(ref, cfg):
     mask, bh, hi = _crack_mask(gray, cfg)
     out = []
     for branch, m, b, h in (("crack", mask, bh, hi), ("pothole", _pothole_mask(gray, cfg), None, None)):
-        for pts in _components(m, cfg["group_ksize"]):
+        for pts in _components(m):
             d = shape_features(pts, b, h)
             kind = classify(d, H * W, branch, cfg)
             if branch == "pothole":

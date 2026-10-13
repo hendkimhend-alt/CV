@@ -21,6 +21,8 @@
 > **최종 구성 F 재기** (10/11, 설정 칸 `t_c10_post`):
 > `python analysis/run_road_pipeline.py --final-config configs/final_crack.json --config-name f_final --note "…"`
 > — 보정 순서와 맞춘 강한 기준(132.172, B의 강한 흔적 총수에 맞춘 값)이 `configs/final_crack.json`에 들어 있다 (캐시 없이 처음부터 돌려도 됨, `--cache`를 주면 빨라짐). 순서 = 노면 마스크 → 감마(어두운 사진만) → 노면 영역 자르기 · 긴 변 1024 → [노면 안에만] 가우시안 → 막대 닫힘 → CLAHE → Hessian 선 점수 → 텐서 전파 → 중심선 → 이중 임계값 → 버리기 (길이 · 양쪽 확인 · 노면 단서 · 깊이) → 도로 위 판정
+> **흐림 대응 (10/12)**: `configs/final_crack.json` · `configs/final.json`의 보정에 추가 — 노면 선명도 < 2.76 (아주 흐림)인 사진만 질감 처리를 건너뛰고 언샤프 3.0 · σ3 → CLAHE. 보정 코드는 `CV-main/src/preprocessing/detector_corrections.py` 하나 (이 실행기와 `CV-main/src/run_road_detection.py --detection-config configs/detection_final.json`이 같은 함수 — 개발 20장 균열 박스 모두 같음 확인). 깨끗한 개발 563장 결과는 그대로 (아주 흐림 판단 4장) · 효과는 섞인 흐림 평가셋으로 잰다 (`--degrade '{"kind": "mixed", "frac": 0.25, "ks": [2, 3.5]}' --det-set line_hi_abs=132.17221069335938`, 아주 흐린 76장 R 0.047 → 0.299 · `results/experiments.md` 8단계)
+> **최종 (균열 + 포트홀)**: `python analysis/run_road_pipeline.py --final-config configs/final.json --config-name final --note "…"` — 같은 전처리 영상에서 균열은 위 검출기, 포트홀은 포트홀 2단계(`src/pothole.py`, `docs/pothole.md`)로 따로 찾고 도로 위 판정은 공통 (10/12, `run_20261012_140359`: 균열 R 0.587 · P 0.355 그대로 · 포트홀 R 0.340 · P 0.035 · 가짜 1.94개/장) → 포트홀 찾기를 주변 노면 고리 비로 바꾼 뒤 (`pothole_find=ring`, `run_20261012_151714`): 균열 그대로 · 포트홀 R 0.415 · P 0.044 · 가짜 2.02개/장
 > ⚠️ `CV-main/`의 자체 평가(`src/run_final.py` 등)는 "겹치면 적중" + ROI 밖 정답 제외라 **이 문서의 숫자와 비교할 수 없다.**
 > `CV-main/`의 전처리를 비교하려면, 그 전처리를 맨 위 `src/`의 설정(`--conditions` · `--roi` 등)으로 넣어 같은 방법으로 잰다.
 

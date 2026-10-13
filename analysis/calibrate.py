@@ -25,7 +25,7 @@ import numpy as np
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 from data import list_images  # noqa: E402
-from detect import (DEFAULT_CFG, _to_gray, find_input, line_centerline, line_centerline_interp,  # noqa: E402
+from detect import (DEFAULT_CFG, _to_gray, find_input, line_centerline,  # noqa: E402
                     line_score, tensor_propagate)
 from metrics import measure_quality  # noqa: E402
 from paths import imread  # noqa: E402
@@ -42,7 +42,7 @@ def candidate_center(gray, cfg):
     if cfg.get("tensor_propagate", 0) > 0:
         field, nangle = tensor_propagate(score, angle, cfg)
         score, angle = (score * field, angle) if cfg.get("tensor_gate", False) else (field, nangle)
-    nms = line_centerline_interp if cfg.get("nms_interp", False) else line_centerline
+    nms = line_centerline
     return nms(score, angle)
 
 
