@@ -3,14 +3,13 @@
 
 사진마다:
   노면 영역·1024 (A geometry_preprocess) → 보정 전 지표로 그룹 분류 (흐림 / 국소 조도 / 정상)
-  → 조건별 보정 (A preprocess_condition) → 품질 지표 (A measure_quality)
-    조건 = 미리 정한 묶음(P0_reference / P1 / P1+) 또는 켤 단계를 +로 이은 것(예: gamma+gaussian, none)
-  → 검출기 D0 / D1 (B detect)
+  → 품질 지표 (A measure_quality) — 보정 단계는 10/13 정리 (조건은 "none"만, 최종 보정은 analysis/run_road_pipeline.py)
+  → 검출기 D1 (B detect)
   → 과제 비교 항목: 에지 수, 특징점 수(SIFT), 후보 수·면적, 처리 시간
   → 정답이 있으면 판정 기준 3개(iou50 / iou30 / in50)로 TP·FP·FN → precision·recall·F1 (evaluate)
     ROI 밖으로 잘린 정답은 놓침(FN)으로 센다 (count_cut)
   → 오검출: FPPI = 사진 1장당 FP (판정 기준별) / 깨끗한 노면 FPPI = 손상 라벨이 없는 사진 1장당 후보 수
-  → 오차 범위: 사진 단위 부트스트랩으로 F1 95% 범위, 기준 조건(--reference, 기본 P1+/D1) 대비 차이 (stats)
+  → 오차 범위: 사진 단위 부트스트랩으로 F1 95% 범위, 기준 조건(--reference, 기본 none/D1) 대비 차이 (stats)
   → 진단용 구분력: 정답 박스 TPR − 옆 노면 대조 박스 FPR (판정에는 안 씀, evaluate.separation)
   → 집계 묶음: 전체 / 품질 그룹 / RDD면 시점(vp_far · vp_road_full · vp_ambiguous, labels/viewpoint_rdd.csv)
     품질 그룹(group, 분석용)은 --roi와 상관없이 **항상 하단 50%** 로 잰다 — 그룹은 사진 자체의 성질이라
@@ -55,7 +54,7 @@ from stats import bootstrap, row_tags
 from preprocess import CONDITIONS, classify_quality, geometry_preprocess, parse_condition, preprocess_condition, validate_config
 from visualize import draw_detections
 
-DETECTORS = ("D0", "D1")
+DETECTORS = ("D1",)                                         # Canny 비교 기준 D0는 10/13 정리
 QUALITY_KEYS = ("gray_mean", "block_mean_std_4x4", "laplacian_variance", "noise_sigma", "saturation_ratio")
 CANNY_EDGES = (100, 200)        # 에지 수 = 13장 실측(표1)과 같은 Canny 기준
 ROOT = Path(__file__).resolve().parent.parent
@@ -85,7 +84,7 @@ def detector_cfg(name, valley_ratio=None, crack_lo_ratio=None, link_dist=None, c
     (예: D1v, D1vl, D1hv)."""
     base, flags = name[:2], name[2:]
     if base not in DETECTORS or set(flags) - {"v", "l", "h"} or len(set(flags)) != len(flags):
-        raise ValueError(f"error:검출기 {name} — D0 / D1 + 뒤에 v(양쪽 확인) · l(조각 잇기) · h(Hessian 찾기) (예: D1v, D1vl, D1hv)")
+        raise ValueError(f"error:검출기 {name} — D1 + 뒤에 v(양쪽 확인) · l(조각 잇기) · h(Hessian 찾기) (예: D1v, D1vl, D1hv)")
     cfg = {"detector": base, "valley_check": "v" in flags}
     if "h" in flags:
         cfg["crack_find"] = "line"
@@ -98,8 +97,6 @@ def detector_cfg(name, valley_ratio=None, crack_lo_ratio=None, link_dist=None, c
         cfg["crack_lo_ratio"] = crack_lo_ratio
     if crack_hi_pct is not None:
         cfg["crack_hi_pct"] = crack_hi_pct
-    if canny is not None:
-        cfg["canny_low"], cfg["canny_high"] = canny
     cfg.update(overrides or {})
     return cfg
 
@@ -192,7 +189,7 @@ def count_edges(gray):
 
 
 def run(dataset="provided", limit=None, conditions=CONDITIONS, detectors=DETECTORS,
-        keypoints=True, save_images=5, n_boot=1000, reference=("P1+", "D1"), roi="bottom_half", flatten_ksize=None,
+        keypoints=True, save_images=5, n_boot=1000, reference=("none", "D1"), roi="bottom_half", flatten_ksize=None,
         valley_ratio=None, crack_lo_ratio=None, link_dist=None, crack_hi_pct=None, canny=None, line_hi_abs=None,
         overrides=None, config_name=None, note="", log=True):
     for cond in conditions:
@@ -203,7 +200,7 @@ def run(dataset="provided", limit=None, conditions=CONDITIONS, detectors=DETECTO
     images = images[:limit] if limit else images
     gt_loader = load_gt(dataset, name)
     viewpoints = load_viewpoints(dataset)
-    cfg_a = validate_config({"roi": roi, **({"flatten": {"ksize": flatten_ksize}} if flatten_ksize else {})})
+    cfg_a = validate_config({"roi": roi})
     cfg_group = validate_config({"roi": "bottom_half"})       # 분석용 품질 그룹은 항상 하단 50%
     sift = cv2.SIFT_create() if keypoints else None
 
@@ -233,7 +230,7 @@ def run(dataset="provided", limit=None, conditions=CONDITIONS, detectors=DETECTO
             t0 = time.perf_counter()
             fixed, _ = preprocess_condition(ref, cfg_a, cond, tags, gamma_cache)
             pre_ms = geometry_ms + (time.perf_counter() - t0) * 1000
-            quality = ref_quality if cond == "P0_reference" else measure_quality(fixed)
+            quality = ref_quality
             gray = cv2.cvtColor(fixed, cv2.COLOR_BGR2GRAY)
             n_edges = count_edges(gray)
             n_kp = len(sift.detect(gray, None)) if sift else None
@@ -389,9 +386,9 @@ def main():
     p.add_argument("--dataset", default="provided", help="provided / captured / rdd / rdd_dev / rdd_test 또는 폴더 경로")
     p.add_argument("--limit", type=int, help="처음 N장만")
     p.add_argument("--conditions", nargs="+", default=list(CONDITIONS),
-                   help="P0_reference / P1 / P1+ 또는 켤 단계를 +로 이은 것 (flatten · gamma · clahe · unsharp · gaussian, 예: flatten, gamma+gaussian, none)")
+                   help="none (보정 단계는 10/13 정리)")
     p.add_argument("--detectors", nargs="+", default=list(DETECTORS),
-                   help="D0 / D1 + 뒤에 v(양쪽 확인: 그림자 경계 · 차선 옆 거르기) · l(조각 잇기) — 예: D1v, D1vl")
+                   help="D1 + 뒤에 v(양쪽 확인: 그림자 경계 · 차선 옆 거르기) · l(조각 잇기) · h(Hessian) — 예: D1v, D1vl, D1hv")
     p.add_argument("--valley-ratio", type=float, help="양쪽 확인 기준 (작은 쪽 ÷ 큰 쪽, 기본 0.35)")
     p.add_argument("--crack-lo-ratio", type=float,
                    help="D1 이중 임계값의 약한 기준 = 강한 기준 × 이 값 (기본 0.5). 낮추면 끊긴 균열 조각이 이어짐")
@@ -399,13 +396,11 @@ def main():
                    help="D1 이중 임계값의 강한 기준(씨앗) = 사진 안 Black-hat 상위 (100 − 이 값)%% (기본 97 = 상위 3%%). 낮추면 씨앗이 늘어남")
     p.add_argument("--set", nargs="+", metavar="키=값", help="detect 설정 덮어쓰기 (예: line_thicken=1 crack_min_length=45)")
     p.add_argument("--line-hi-abs", type=float, help="Hessian 찾기(h)의 고정 강한 기준 (기본 32.5 ≈ 흔적 양 5.9%%)")
-    p.add_argument("--canny", type=int, nargs=2, metavar=("LOW", "HIGH"), help="D0 Canny 기준 (기본 50 150)")
     p.add_argument("--link-dist", type=int, help="조각 잇기 최대 거리 (px, 긴 변 1024 기준, 기본 15) — 검출기 이름에 l")
     p.add_argument("--no-keypoints", action="store_true", help="SIFT 특징점 수 생략 (빠르게)")
     p.add_argument("--save-images", type=int, default=5, help="결과 그림 저장 장수 (0 = 안 함, -1 = 전부)")
     p.add_argument("--bootstrap", type=int, default=1000, help="F1 오차 범위 부트스트랩 횟수 (0 = 안 함)")
-    p.add_argument("--reference", default="P1+/D1", help="차이를 잴 기준 조건 '전처리/검출기' (기본: 1차 최종 후보)")
-    p.add_argument("--flatten-ksize", type=int, help="조명 펴기 배경 크기 (긴 변 1024 기준 픽셀, 기본 61)")
+    p.add_argument("--reference", default="none/D1", help="차이를 잴 기준 조건 '전처리/검출기'")
     p.add_argument("--roi", default="bottom_half",
                    help="노면 영역: bottom_half(기본) / full(전체) / bottom_<N>(아래쪽 N%%만, 예: bottom_60) / auto(사진마다 도로 시작 높이)")
     pre, _ = p.parse_known_args()
@@ -414,8 +409,8 @@ def main():
     a = p.parse_args()
     overrides = {**cfg.get("set", {}), **parse_overrides(a.set)}          # 명령줄 --set이 설정 파일보다 우선
     run(a.dataset, a.limit, tuple(a.conditions), tuple(a.detectors), not a.no_keypoints, a.save_images,
-        a.bootstrap, tuple(a.reference.split("/")), a.roi, a.flatten_ksize, a.valley_ratio, a.crack_lo_ratio, a.link_dist,
-        a.crack_hi_pct, tuple(a.canny) if a.canny else None, a.line_hi_abs, overrides,
+        a.bootstrap, tuple(a.reference.split("/")), a.roi, None, a.valley_ratio, a.crack_lo_ratio, a.link_dist,
+        a.crack_hi_pct, None, a.line_hi_abs, overrides,
         Path(a.config).stem if a.config else None, a.note, not a.no_log)
 
 

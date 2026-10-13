@@ -72,7 +72,7 @@ for ann in sorted(glob.glob(f"{ROOT}/ann/*.json")):
         for i, (_, x1, y1, x2, y2) in gt:
             union[y1:y2, x1:x2] = True
             box_id[y1:y2, x1:x2] = i
-        for pts in _components(mask_fn(roi, DEFAULT_CFG), DEFAULT_CFG["group_ksize"]):
+        for pts in _components(mask_fn(roi, DEFAULT_CFG)):
             f = shape_features(pts)
             if f["area"] / img_area < MIN_AREA_RATIO:
                 continue

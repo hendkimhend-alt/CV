@@ -105,3 +105,11 @@ OpenCV가 headless 빌드라 창 기능이 없으므로 수동 마스크 편집�
 - `../CV-main-removed-20261010-b/` (2차, 12,469개): 검출 정확도 채점(`evaluate_road_detection.py` · `road_detection/accuracy.py`),
   후보 지표 `preprocessing/seed_agreement.py`, 쓰이지 않던 `visualize.py`, 시점 라벨 `labels/viewpoint_rdd.csv`, 해당 테스트,
   `outputs/`의 실행 · 진단 결과 전부 (전처리 진단 `preprocessing_eval_20261010/` 포함)
+
+## 정리 기록 (2026-10-13)
+
+쓰이지 않던 것을 지웠다 (git 기록에 남음 · 실험 결과는 저장소 `results/experiments.md`).
+- **MSR · 고정 ROI 전처리 경로 전체** (팀원 요청): `src/adaptive_preprocess.py` · `run_final.py` · `A.py` · `preprocess.py` · `run_pipeline.py` · `run_detect.py` · `metrics.py` · `roi.py` · `evaluate.py` · `visualize.py` · `final_preprocessing_config.json`, 해당 테스트 5개, `backups/`
+  — 정식 실행 경로(`src/run_road_detection.py` → `preprocessing/` → `road_detection/` → `detect.py`)는 이것들을 쓰지 않음
+- 검출기 `detect.py`: Canny 비교 기준 D0 · 조각 묶기 · 점수 전파 · 보간 중심선 · 세장비 진하기 하한 (실험 탈락 · 비교용)
+- 검출기 입력 보정 `preprocessing/detector_corrections.py`: 사진마다 감마 · Harris 거친 곳 단계 (실험 탈락)

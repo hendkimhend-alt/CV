@@ -42,7 +42,7 @@ def detector_cfg(name, valley_ratio=None, crack_lo_ratio=None, link_dist=None, c
                  line_hi_abs=None, overrides=None):
     """검출기 이름 → detect() 설정. 뒤에 붙는 글자: v = 양쪽 확인, l = 조각 잇기, h = 찾기를 Hessian 선 점수로."""
     base, flags = name[:2], name[2:]
-    if base not in ("D0", "D1") or set(flags) - {"v", "l", "h"} or len(set(flags)) != len(flags):
+    if base != "D1" or set(flags) - {"v", "l", "h"} or len(set(flags)) != len(flags):
         raise DetectionConfigError(f"검출기 {name} — D0 / D1 + 뒤에 v · l · h (예: D1v, D1vl, D1hv)")
     cfg = {"detector": base, "valley_check": "v" in flags}
     if "h" in flags:
@@ -57,7 +57,7 @@ def detector_cfg(name, valley_ratio=None, crack_lo_ratio=None, link_dist=None, c
     if crack_hi_pct is not None:
         cfg["crack_hi_pct"] = crack_hi_pct
     if canny is not None:
-        cfg["canny_low"], cfg["canny_high"] = canny
+        pass                                             # Canny 비교 기준 D0는 10/13 정리 (값은 무시)
     cfg.update(overrides or {})
     return cfg
 

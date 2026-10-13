@@ -16,13 +16,7 @@ B 위에 얹는 보정 (--extra, 기본 없음 = B 그대로):
   "apply_to": "blur_rt" / "not_blur_rt" + "blur_thr": 50     흐림을 파이프라인이 직접 판단 (not_blur_rt = 흐리지 않은 사진에만, 예: 질감 처리): 노면 마스크 안 선명도(Laplacian 분산,
                                                              사진 긴 변 1024 척도) < blur_thr (1차 흐림 기준 50 — analysis/blur_judge.py)
   {"clahe": {"clip": 2.0, "tile": 8, "apply_to": "all"}}     CLAHE (Lab L 채널, apply_to: all · local_illumination 등 그룹)
-  {"gamma": {"mode": "auto", "min": 0.5, "max": 2.0}}        사진마다 감마: 노면 회색 가운데값 m이 128이 되는 γ = ln 0.5 ÷ ln(m/255)
-                                                             (auto_dark = γ ≤ 1만, 어두운 사진만 밝게 · fixed = "value")
-  {"harris_adapt": {"win": 31, "thr": 2.0, "strong": {…질감 처리…}}}
-                                                             거친 곳만 더 세게: Harris 코너 세기(수업 3-2)를 창(win)으로 평균 내 사진 노면의 중앙값으로 나눈 값이
-                                                             thr 이상인 노면은 "strong" 질감 처리 결과로 바꿈 (판단은 보정 전 입력으로 · thr는 정답 없이
-                                                             노면 분포의 분위수로 정함 — analysis/harris_density.py)
-  여러 개를 함께 쓰면 "order"의 순서로 (기본 감마 → CLAHE → 가우시안 → 막대 닫힘 → 언샤프),
+  여러 개를 함께 쓰면 "order"의 순서로 (기본 CLAHE → 가우시안 → 막대 닫힘 → 언샤프 · 감마 · Harris 단계는 10/13 정리),
   예: {"line_close": …, "gaussian": …, "order": ["line_close", "gaussian"]} · 모든 단계에 "apply_to" 가능 (기본 all)
   보정은 Hessian 점수 크기를 바꾸므로 --calibrate로 강한 기준을 다시 맞춘다:
   B 그대로일 때 강한 흔적(중심선 ≥ 128.609375) 총수와 같아지는 값 (사진만 씀, 정답 안 봄 — analysis/calibrate.py와 같은 원리)
@@ -58,7 +52,7 @@ MAIN = ROOT / "CV-main"
 SHARED = ("paths", "data", "evaluate", "preprocess", "roi", "detect", "roadcue")
 sys.path.insert(0, str(MAIN / "src"))
 from detect import (DEFAULT_CFG, _line_kernel, _to_gray, detect, find_input, line_centerline,  # noqa: E402
-                    line_centerline_interp, line_score, tensor_propagate)
+                    line_score, tensor_propagate)
 from preprocessing.config import config_hash, load_config  # noqa: E402
 from preprocessing.detector_adapter import to_detector_input, to_original_bbox  # noqa: E402
 from preprocessing.detector_corrections import apply_corrections, judge_tags, road_sharpness  # noqa: E402
@@ -144,7 +138,7 @@ def center_map(img, cfg):
     if cfg.get("tensor_propagate", 0) > 0:
         field, nangle = tensor_propagate(score, angle, cfg)
         score, angle = (score * field, angle) if cfg.get("tensor_gate", False) else (field, nangle)
-    nms = line_centerline_interp if cfg.get("nms_interp", False) else line_centerline
+    nms = line_centerline
     return nms(score, angle)
 
 

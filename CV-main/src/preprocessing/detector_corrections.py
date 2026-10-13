@@ -8,7 +8,7 @@
 설정 (검출 설정 파일의 "corrections", 또는 analysis/run_road_pipeline.py의 --extra · configs/final*.json의 "extra")
   {"gaussian": {"ksize": 3, "sigma": 0.8}, "line_close": {"length": 7, "angles": 12},
    "unsharp": {"amount": 3.0, "sigma": 3.0}, "clahe": {"clip": 1.0, "tile": 8},
-   "gamma": {"mode": "auto" | "auto_dark" | "fixed", ...}, "order": [단계 순서]}
+   "order": [단계 순서]}
   단계마다 "apply_to": "all"(기본) · "blur_rt"(아주 흐린 사진만) · "not_blur_rt"(그 밖) · 그룹 이름
   흐림 판단 기준은 단계 중 하나의 "blur_thr" (기본 50)
 """
@@ -17,8 +17,8 @@ import numpy as np
 
 from detect import _line_kernel
 
-STEPS = ("gamma", "clahe", "gaussian", "line_close", "harris_adapt", "unsharp")
-DEFAULT_ORDER = ("gamma", "clahe", "gaussian", "line_close", "unsharp")
+STEPS = ("clahe", "gaussian", "line_close", "unsharp")     # 사진마다 감마 · Harris 거친 곳(실험 탈락)은 10/13 정리
+DEFAULT_ORDER = ("clahe", "gaussian", "line_close", "unsharp")
 
 
 def validate(corr):
@@ -62,16 +62,7 @@ def apply_corrections(img, mask, corr, tags):
         c = corr[step]
         if c.get("apply_to", "all") != "all" and c["apply_to"] not in tags:
             continue
-        if step == "gamma":
-            if c["mode"] == "fixed":
-                g = float(c["value"])
-            else:
-                gray = cv2.cvtColor(out, cv2.COLOR_BGR2GRAY)
-                m = float(np.clip(np.median(gray[mask > 0]) if np.any(mask > 0) else np.median(gray), 1, 254))
-                g = float(np.clip(np.log(0.5) / np.log(m / 255.0), c.get("min", 0.5), c.get("max", 2.0)))
-                g = min(g, 1.0) if c["mode"] == "auto_dark" else g
-            out = cv2.LUT(out, np.rint(255.0 * (np.arange(256) / 255.0) ** g).astype(np.uint8))
-        elif step == "clahe":
+        if step == "clahe":
             lab = cv2.cvtColor(out, cv2.COLOR_BGR2LAB)
             lab[:, :, 0] = cv2.createCLAHE(clipLimit=c["clip"], tileGridSize=(c.get("tile", 8),) * 2).apply(lab[:, :, 0])
             out = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
@@ -81,13 +72,6 @@ def apply_corrections(img, mask, corr, tags):
             closed = [cv2.morphologyEx(out, cv2.MORPH_CLOSE, _line_kernel(c["length"], 180.0 * i / c["angles"]),
                                        borderType=cv2.BORDER_REPLICATE) for i in range(c["angles"])]
             out = np.min(np.stack(closed), axis=0)
-        elif step == "harris_adapt":                      # 실험용 (10/12 ❌) — 거친 곳만 더 세게
-            resp = cv2.cornerHarris(cv2.cvtColor(img, cv2.COLOR_BGR2GRAY).astype(np.float32), 2, 3, 0.04)
-            energy = cv2.boxFilter(np.maximum(resp, 0), -1, (c["win"], c["win"]))
-            energy /= max(float(np.median(energy[mask > 0])) if np.any(mask > 0) else 1.0, 1e-9)
-            rough = (energy >= c["thr"]) & (mask > 0)
-            strong, _ = apply_corrections(img, mask, c["strong"], tags)
-            out = np.where(rough[..., None], strong, out)
         elif step == "unsharp":
             src = out.astype(np.float32)
             blur = cv2.GaussianBlur(src, (0, 0), c["sigma"], borderType=cv2.BORDER_REFLECT_101)

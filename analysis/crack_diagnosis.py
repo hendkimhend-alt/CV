@@ -50,7 +50,7 @@ def reason(d, cfg, W, H, mask):
         return "남음" if R.road_overlap(mask, d["bbox"]) >= 0.5 else "도로 밖"
     if d["length"] < cfg["crack_min_length"]:
         return "짧음"
-    if d["elong"] < cfg["crack_min_elong"] or d["contrast"] < cfg["crack_min_contrast"]:
+    if d["elong"] < cfg["crack_min_elong"]:
         return "세장비"
     if TOUCH(d["bbox"], W, H, cfg):
         return "테두리"

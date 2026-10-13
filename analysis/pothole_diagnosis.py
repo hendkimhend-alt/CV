@@ -43,7 +43,7 @@ def inside(d, g):
 
 def baseline(gray):
     cfg = DEFAULT_CFG; H, W = gray.shape; out = []
-    for pts in _components(_pothole_mask(gray, cfg), cfg["group_ksize"]):
+    for pts in _components(_pothole_mask(gray, cfg)):
         d = shape_features(pts); d["type"] = classify(d, H * W, "pothole", cfg)
         if d["type"] == "pothole" and not _touches_border(d["bbox"], W, H, cfg):
             out.append(d)

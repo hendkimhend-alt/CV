@@ -1,12 +1,9 @@
-"""공통 ROI·Resize, 품질값 자동 분류와 전처리 조건.
+"""공통 ROI · Resize와 품질값 자동 분류.
 
-조건 = 켤 보정 단계 목록. 단계는 항상 STAGE_ORDER 순서로 적용한다 (입력 순서와 무관).
-- flatten(조명 펴기): 그림자 처리. ROI · 크기 바로 다음 — 조명이 가장 근본적인 문제라 대비 · 선명도 · 잡음 보정보다
-  먼저, 전체 밝기도 같이 맞추므로 감마보다 먼저 (2차 실험 순서, 05번 노트)
-- 미리 정한 묶음: P0_reference(없음) · P1(gamma+gaussian) · P1+(gamma+clahe+unsharp+gaussian)
-- 직접 지정: "gamma+gaussian"처럼 단계를 +로 잇는다. "none" = 보정 없음
-- unsharp는 흐림(blur)으로 분류된 사진에만 적용된다 (1차 설계와 같음)
-실험 원칙: 이미 정한 단계는 켜고, 아직 안 정한 단계는 끈다 → 원하는 단계만 켜서 비교할 수 있게
+보정 단계(감마 · CLAHE · 언샤프 · 가우시안 · 조명 펴기)는 10/13에 정리했다 — 최종 구성의 보정은
+CV-main/src/preprocessing/detector_corrections.py (노면 마스크 안에만, 연결 뒤 · 검출 앞). 실험 기록: results/experiments.md
+여기 남은 것: ROI 자르기 · 긴 변 1024 맞추기(geometry_preprocess) · 품질 그룹 분류(classify_quality) — 분석 스크립트용
+조건은 "none"(보정 없음)만 받는다.
 """
 
 from __future__ import annotations
@@ -14,15 +11,11 @@ from __future__ import annotations
 import copy
 import json
 import math
-import time
-from functools import lru_cache
 
 import cv2
 import numpy as np
 
-CONDITIONS = ("P0_reference", "P1", "P1+")                # 미리 정한 묶음 (A.py 그래프 등에서 사용)
-STAGE_ORDER = ("flatten", "gamma", "clahe", "unsharp", "gaussian")     # 보정 단계 적용 순서
-PRESETS = {"P0_reference": (), "P1": ("gamma", "gaussian"), "P1+": ("gamma", "clahe", "unsharp", "gaussian")}
+CONDITIONS = ("none",)                                     # 보정 없음만 (보정 단계는 10/13 정리)
 VALID_TAGS = {"blur", "local_illumination", "normal", "unclassified"}
 # 기능: 보정 전 ROI·Resize 영상의 품질값으로 그룹을 자동 결정한다.
 # 특징: 경계값 50·44는 포함하지 않는다. 필요하면 아래 숫자만 수정한다.
@@ -34,23 +27,11 @@ DEFAULT_CONFIG = {
     "roi": "bottom_half", "roi_overrides": {},
     "resize": {"long_side": 1024, "allow_upscale": True,
                "down_interpolation": "area", "up_interpolation": "cubic"},
-    "gamma": {"value": 0.8, "channel": "BGR"},
-    "gaussian": {"kernel": 3, "sigma": 0.8},
-    "clahe": {"clip_limit": 2.0, "tile_grid": [8, 8], "channel": "LAB_L"},
-    "unsharp": {"amount": 0.5, "sigma": 1.0},
-    # 조명 펴기: 큰 closing으로 가늘고 어두운 것(균열)을 지운 "조명 배경" → 밝기(L) ÷ 배경 × target
-    # ksize = closing 크기(긴 변 1024 기준 픽셀). 균열 폭보다 크고 그림자보다 작아야 함 — 후보 31 · 61 · 121
-    "flatten": {"ksize": 61, "target": 128, "channel": "LAB_L"},
 }
 GEOMETRY_COLUMNS = [
     "original_width", "original_height", "crop_x", "crop_y", "crop_width", "crop_height",
     "output_width", "output_height", "scale_x", "scale_y", "roi_json", "allow_upscale",
     "resize_interpolation",
-]
-PARAMETER_COLUMNS = [
-    "gamma", "gamma_channel", "gaussian_kernel", "gaussian_sigma", "clahe_clip_limit",
-    "clahe_tile_width", "clahe_tile_height", "clahe_channel", "unsharp_applied",
-    "unsharp_amount", "unsharp_sigma", "flatten_ksize", "flatten_target",
 ]
 
 
@@ -118,25 +99,6 @@ def validate_config(updates=None):
     for key in ("down_interpolation", "up_interpolation"):
         if not isinstance(resize[key], str) or resize[key] not in INTERPOLATIONS:
             raise ValueError(f"error:{key} 보간법 오류")
-    for section, key, strict in [("gamma", "value", True), ("gaussian", "sigma", False),
-                                 ("clahe", "clip_limit", True), ("unsharp", "amount", False),
-                                 ("unsharp", "sigma", True)]:
-        check_number(cfg[section][key], f"{section}.{key}", strict=strict)
-    kernel = cfg["gaussian"]["kernel"]
-    check_number(kernel, "gaussian.kernel", 1, integer=True)
-    if kernel % 2 == 0:
-        raise ValueError("error:Gaussian 커널은 양의 홀수")
-    tiles = cfg["clahe"]["tile_grid"]
-    if not isinstance(tiles, list) or len(tiles) != 2:
-        raise ValueError("error:tile_grid는 [가로 타일 수,세로 타일 수]")
-    for value in tiles:
-        check_number(value, "clahe.tile_grid", 1, integer=True)
-    check_number(cfg["flatten"]["ksize"], "flatten.ksize", 3, integer=True)
-    check_number(cfg["flatten"]["target"], "flatten.target", strict=True)
-    if cfg["flatten"]["target"] > 255 or cfg["flatten"]["channel"] != "LAB_L":
-        raise ValueError("error:flatten.target은 0~255, 채널은 LAB_L")
-    if cfg["gamma"]["channel"] != "BGR" or cfg["clahe"]["channel"] != "LAB_L":
-        raise ValueError("error:Gamma는 BGR, CLAHE는 LAB_L 채널")
     return cfg
 
 
@@ -244,157 +206,25 @@ def geometry_preprocess(img, cfg, image_id=""):
     return cropped, geometry
 
 
-# 기능: Gamma별 256개 밝기 보정표를 만든다.
-# 특징: A1의 float64 공식과 반올림을 유지하며 최대 32개 읽기 전용 표만 재사용한다.
-@lru_cache(maxsize=32)
-def gamma_lut(gamma):
-    lut = np.rint(255.0 * (np.arange(256, dtype=np.float64) / 255.0) ** gamma).astype(np.uint8)
-    lut.setflags(write=False)
-    return lut
-
-
-# 기능: y=255*(x/255)^gamma 공식을 BGR 각 채널에 적용한다.
-# 특징: gamma<1은 중간 밝기를 높인다. 자동 Gamma 선정이나 원본 수정은 하지 않는다.
-def apply_gamma(img, gamma):
-    check_number(gamma, "gamma", strict=True)
-    return cv2.LUT(img, gamma_lut(float(gamma)))
-
-
-# 기능: 조명 펴기 — Lab L 채널을 "조명 배경"으로 나눠 그림자 · 밝기 차이를 고르게 한다.
-# 특징: 배경 = 큰 closing(수업 모폴로지: 가늘고 어두운 균열은 지우고, 그보다 큰 그림자 · 조명은 남김)
-#       → 가우시안으로 매끄럽게. 결과 L = L ÷ 배경 × target → 모든 사진의 노면 밝기가 target 근처로 맞춰진다.
-#       색(a · b)은 그대로. 그림자 경계 근처에는 배경 크기만큼 띠 모양 자국이 남을 수 있다.
-def flatten_background(lightness, cfg):
-    k = cfg["ksize"]
-    closed = cv2.morphologyEx(lightness, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_RECT, (k, k)),
-                              borderType=cv2.BORDER_REPLICATE)
-    return cv2.GaussianBlur(closed.astype(np.float32), (0, 0), k / 4, borderType=cv2.BORDER_REFLECT_101)
-
-
-def apply_flatten(img, cfg):
-    lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
-    lightness = lab[:, :, 0]
-    background = np.maximum(flatten_background(lightness, cfg), 1.0)
-    lab[:, :, 0] = np.rint(np.clip(lightness.astype(np.float32) / background * cfg["target"], 0, 255)).astype(np.uint8)
-    return cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
-
-
-# 기능: Lab L 채널에만 CLAHE를 적용한다.
-# 특징: A1과 같은 색공간 변환·타일 개수·대비 제한값을 사용한다.
-def apply_clahe(img, cfg):
-    lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
-    clahe = cv2.createCLAHE(clipLimit=cfg["clip_limit"], tileGridSize=tuple(cfg["tile_grid"]))
-    lab[:, :, 0] = clahe.apply(lab[:, :, 0])
-    return cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
-
-
-# 기능: 입력과 Gaussian 흐림 영상의 차이를 더해 윤곽을 강조한다.
-# 특징: float32 계산·0~255 제한·반올림을 유지하며 적용할 그룹은 조건 함수에서 결정한다.
-def apply_unsharp(img, cfg):
-    source = img.astype(np.float32)
-    blurred = cv2.GaussianBlur(source, (0, 0), cfg["sigma"], borderType=cv2.BORDER_REFLECT_101)
-    return np.rint(np.clip(source + cfg["amount"] * (source - blurred), 0, 255)).astype(np.uint8)
-
-
-# 기능: 보정 경로 마지막에 Gaussian 평활화를 적용한다.
-# 특징: Unsharp 다음에 실행하며 커널·sigma·REFLECT_101 경계 처리는 A1과 같다.
-def apply_gaussian(img, cfg):
-    kernel = cfg["kernel"]
-    return cv2.GaussianBlur(img, (kernel, kernel), cfg["sigma"], borderType=cv2.BORDER_REFLECT_101)
-
-
-# 기능: 조건 이름 → 켤 단계 튜플 (STAGE_ORDER 순서).
-# 특징: 묶음 이름(P0_reference·P1·P1+), "none", "gamma+gaussian"처럼 +로 이은 단계를 받는다.
+# 기능: 조건 이름 확인 — 보정 단계는 정리되어 "none"만 받는다.
 def parse_condition(condition):
-    if condition in PRESETS:
-        return PRESETS[condition]
-    if not isinstance(condition, str) or not condition.strip():
-        raise ValueError(f"error:알 수 없는 전처리 조건 {condition}")
-    if condition == "none":
-        return ()
-    stages = [part.strip() for part in condition.split("+")]
-    unknown = [part for part in stages if part not in STAGE_ORDER]
-    if unknown or len(set(stages)) != len(stages):
-        raise ValueError(f"error:전처리 조건 {condition} — 단계는 {'/'.join(STAGE_ORDER)} 중 중복 없이 +로 연결")
-    return tuple(stage for stage in STAGE_ORDER if stage in stages)
+    if condition != "none":
+        raise ValueError(f"error:전처리 조건 {condition} — 보정 단계는 10/13 정리, \"none\"만 (최종 보정은 detector_corrections)")
+    return ()
 
 
-# 기능: 공통 기준 영상에 조건의 단계를 차례로 적용하고 실제 적용 파라미터를 기록한다.
-# 특징: unsharp는 자동 분류된 blur에만 적용한다. 태그가 없으면 기준 영상으로 분류한다.
-#       Gamma 캐시는 이미지마다 새로 만든다. 직접 전달한 태그는 같은 분류 함수의 결과여야 한다.
-def preprocess_condition(reference, cfg, condition, tags=None, gamma_cache=None):
-    stages = parse_condition(condition)
-    params = {name: None for name in PARAMETER_COLUMNS}
-    params.update(stages=["ROI", "Resize"], gamma_channel="", clahe_channel="", unsharp_applied=False)
-    if not stages:
-        return reference.copy(), params
-    if "unsharp" in stages:
-        if tags is None:
-            # 기능: 단독 호출에서도 runner와 같은 기준 영상으로 자동 분류한다.
-            # 특징: metrics의 역방향 import를 피하기 위해 호출 시점에 불러온다.
-            if __package__:
-                from .metrics import measure_quality
-            else:
-                from metrics import measure_quality
-            tags = classify_quality(measure_quality(reference))
-        if not isinstance(tags, (str, tuple, list)) or (not isinstance(tags, str) and any(not isinstance(t, str) for t in tags)):
-            raise ValueError("error:품질 태그는 문자열 또는 문자열 목록")
-        tags = parse_tags(tags if isinstance(tags, str) else ";".join(tags))
-    result = reference
-    for stage in stages:
-        if stage == "flatten":
-            result = apply_flatten(result, cfg["flatten"])
-            params["stages"].append("Flatten")
-            params.update(flatten_ksize=cfg["flatten"]["ksize"], flatten_target=cfg["flatten"]["target"])
-        elif stage == "gamma":
-            # 기준 영상에 바로 거는 경우만 캐시 (flatten 뒤면 매번 계산)
-            result = (_gamma_cached(reference, cfg, gamma_cache) if result is reference
-                      else apply_gamma(result, cfg["gamma"]["value"]))
-            params["stages"].append("Gamma")
-            params.update(gamma=cfg["gamma"]["value"], gamma_channel="BGR")
-        elif stage == "clahe":
-            result = apply_clahe(result, cfg["clahe"])
-            params["stages"].append("CLAHE")
-            params.update(clahe_clip_limit=cfg["clahe"]["clip_limit"],
-                          clahe_tile_width=cfg["clahe"]["tile_grid"][0],
-                          clahe_tile_height=cfg["clahe"]["tile_grid"][1], clahe_channel="LAB_L")
-        elif stage == "unsharp" and "blur" in tags:
-            result = apply_unsharp(result, cfg["unsharp"])
-            params["stages"].append("Unsharp")
-            params.update(unsharp_applied=True, unsharp_amount=cfg["unsharp"]["amount"],
-                          unsharp_sigma=cfg["unsharp"]["sigma"])
-        elif stage == "gaussian":
-            result = apply_gaussian(result, cfg["gaussian"])
-            params["stages"].append("Gaussian")
-            params.update(gaussian_kernel=cfg["gaussian"]["kernel"], gaussian_sigma=cfg["gaussian"]["sigma"])
-    return (result.copy() if result is reference else result), params
+# 기능: 공통 기준 영상을 그대로 돌려준다 (예전 호출 모양 유지).
+def preprocess_condition(reference, cfg, condition="none", tags=None, gamma_cache=None):
+    parse_condition(condition)
+    return reference.copy(), {"stages": ["ROI", "Resize"]}
 
 
-# 기능: 기준 영상의 Gamma 결과 (flatten이 없으면 gamma가 기준 영상에 바로 적용된다).
-# 특징: 캐시가 다른 기준 영상·Gamma에 재사용되면 이전 결과를 제거한다. 픽셀 전체를 해시하지 않고
-#       배열 객체와 파라미터를 비교한다. 기준 영상은 수정하지 않는다.
-def _gamma_cached(reference, cfg, gamma_cache):
-    if gamma_cache is None:
-        return apply_gamma(reference, cfg["gamma"]["value"])
-    if not isinstance(gamma_cache, dict):
-        raise ValueError("error:Gamma 캐시는 사전이어야 함")
-    if gamma_cache.get("reference") is not reference or gamma_cache.get("gamma") != cfg["gamma"]["value"]:
-        gamma_cache.clear()
-        gamma_cache.update(reference=reference, gamma=cfg["gamma"]["value"])
-    if "image" not in gamma_cache:
-        start = time.perf_counter()
-        gamma_cache["image"] = apply_gamma(reference, cfg["gamma"]["value"])
-        gamma_cache["ms"] = (time.perf_counter() - start) * 1000
-    return gamma_cache["image"]
-
-
-# 기능: 다음 역할에서 이미지 한 장을 보정할 수 있도록 preprocess(img, cfg) 인터페이스를 제공한다.
-# 특징: condition 기본값은 P1. P1+도 수동 태그 없이 자동 분류하며 파일 입출력 없이 새 BGR 영상을 반환한다.
+# 기능: 이미지 한 장을 ROI · Resize 한다 (preprocess(img, cfg) 인터페이스).
 def preprocess(img, cfg):
     if not isinstance(cfg, dict):
-        raise ValueError("error:cfg는 보정 설정 사전")
+        raise ValueError("error:cfg는 설정 사전")
     settings = copy.deepcopy(cfg)
-    condition, image_id = settings.pop("condition", "P1"), settings.pop("image_id", "")
+    condition, image_id = settings.pop("condition", "none"), settings.pop("image_id", "")
     normalized = validate_config(settings)
     reference, _ = geometry_preprocess(img, normalized, image_id)
     return preprocess_condition(reference, normalized, condition)[0]

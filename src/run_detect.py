@@ -4,7 +4,7 @@
 A의 preprocess()가 붙기 전까지 혼자 돌리는 용도. prepare()는 노면 ROI(하단 절반) +
 긴 변 1024 리사이즈만 한다 — 커널·블록 크기를 실제 파이프라인과 같은 스케일로 맞추기 위함.
 
-출력: outputs/detect/<D0|D1>/<name>.png, outputs/detect/summary.csv
+출력: outputs/detect/<D1>/<name>.png, outputs/detect/summary.csv
 실행: python src/run_detect.py
 """
 import csv, glob, os, time
@@ -19,7 +19,7 @@ from visualize import draw_detections, save
 
 DATA_DIR = str(PROVIDED_DIR)
 OUT_DIR = str(OUTPUT_DIR / "detect")
-DETECTORS = ["D0", "D1"]
+DETECTORS = ["D1"]                                         # Canny 비교 기준 D0는 10/13 정리
 LONG_SIDE = 1024
 
 
