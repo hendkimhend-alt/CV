@@ -1,0 +1,5 @@
+# final0 — 최종 구성 실행에 필요한 것
+# 균열 검출기(Hessian 찾기의 세선화)가 cv2.ximgproc를 쓰므로 opencv-python이 아니라 opencv-contrib-python
+# (opencv-python과 함께 설치하지 않는다 — 이미 있으면 먼저 pip uninstall opencv-python)
+opencv-contrib-python==4.10.0.84
+numpy>=2.0
