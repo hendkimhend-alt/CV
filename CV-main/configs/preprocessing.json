@@ -7,6 +7,8 @@
     "_comment": "자동 Road Mask 추출. 길이 단위(px)는 모두 작업 해상도(work_long_side로 축소한 영상) 기준.",
     "work_long_side": 1024,
     "upsample_threshold": 0.5,
+    "_no_seed_full_frame": "시드가 0개라 마스크가 비면 화면 전체를 노면 후보로 씀 (검증 FAIL · 검출은 진행). false면 이전과 같음 (검출 건너뜀)",
+    "no_seed_full_frame": true,
     "features": {
       "smooth_sigma": 2.0,
       "gradient_sigma": 1.0,
@@ -25,6 +27,8 @@
       "min_distance_cells": 3,
       "max_chroma_distance_to_best": 5.0,
       "max_lightness_distance_to_best": 25.0,
+      "_max_shadow_darkening_to_best": "첫 시드보다 어두운 칸의 밝기 차 상한 (그림자 시드 허용). 25로 두면 이전과 같음.",
+      "max_shadow_darkening_to_best": 50.0,
       "max_texture_ratio_to_best": 2.0,
       "weights": {
         "position": 1.0,
@@ -53,7 +57,17 @@
       "max_lightness_diff": 30.0,
       "max_gradient": 5.0,
       "texture_ratio_range": [0.35, 2.5],
-      "min_seed_cell_coverage": 0.3
+      "min_seed_cell_coverage": 0.3,
+      "shadow": {
+        "_comment": "그림자 허용: 시드보다 어둡고 a는 비슷 · b는 파란 쪽(−) 이동을 blue_shift_weight배로만 봄. enabled false면 이전과 같음.",
+        "enabled": true,
+        "max_darkening": 60.0,
+        "color_threshold": 7.0,
+        "blue_shift_weight": 0.2,
+        "_max_rise_ratio": "시드 위로 영상 높이의 이 비율까지만 그림자 허용 (null이면 제한 없음)",
+        "max_rise_ratio": 0.1,
+        "min_texture_scale": 0.3
+      }
     },
     "refine": {
       "close_kernel": 7,

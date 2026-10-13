@@ -17,7 +17,7 @@ def color_threshold(reference, cfg_rg):
     return min(t, cfg_rg["max_color_threshold"])
 
 
-def acceptance_mask(maps, reference, cfg_rg, lightness_weight):
+def acceptance_mask(maps, reference, cfg_rg, lightness_weight, seed_y=None):
     lab = maps.lab
     d_l = lab[..., 0] - reference["lab"][0]
     d_a = lab[..., 1] - reference["lab"][1]
@@ -27,11 +27,25 @@ def acceptance_mask(maps, reference, cfg_rg, lightness_weight):
 
     accept = distance <= color_threshold(reference, cfg_rg)
     accept &= np.abs(d_l) <= cfg_rg["max_lightness_diff"]          # 흰 차선, 하늘
+    tex_scale = 1.0
+    shadow_cfg = cfg_rg.get("shadow")
+    if shadow_cfg and shadow_cfg["enabled"]:
+        # 그림자: 직사광이 가려져 하늘빛만 받음 → 어두워지고 b가 파란 쪽(−)으로 이동. 그 방향만 덜 본다
+        d_b_eff = np.where(d_b < 0, d_b * shadow_cfg["blue_shift_weight"], d_b)
+        shadow = ((d_l < 0) & (-d_l <= shadow_cfg["max_darkening"])
+                  & (np.hypot(d_a, d_b_eff) <= shadow_cfg["color_threshold"]))
+        # 먼 경치(나무, 건물)도 공기 때문에 어둡고 파랗게 보임 → 시드보다 너무 위에서는 그림자로 보지 않음
+        rise = shadow_cfg["max_rise_ratio"]
+        if rise is not None and seed_y is not None:
+            shadow[:max(0, int(seed_y - rise * lab.shape[0]))] = False
+        accept |= shadow
+        # 질감(|Laplacian|)도 빛의 양에 비례해 약해짐 → 하한을 밝기 비율만큼 낮춤
+        tex_scale = np.clip(lab[..., 0] / max(reference["lab"][0], 1e-6), shadow_cfg["min_texture_scale"], 1.0)
     if cfg_rg["max_gradient"] is not None:
         accept &= maps.gradient <= cfg_rg["max_gradient"]          # 연석, 차량 윤곽
     lo, hi = cfg_rg["texture_ratio_range"]
     ref_tex = max(reference["texture"], 1e-6)
-    accept &= (maps.texture >= lo * ref_tex) & (maps.texture <= hi * ref_tex)
+    accept &= (maps.texture >= lo * ref_tex * tex_scale) & (maps.texture <= hi * ref_tex)
     return accept
 
 
@@ -41,7 +55,7 @@ def grow_regions(maps, grid, seeds, cfg_rg, lightness_weight):
     records = []
     for seed in seeds:
         reference = seed_reference(maps, grid, seed)
-        accept = acceptance_mask(maps, reference, cfg_rg, lightness_weight)
+        accept = acceptance_mask(maps, reference, cfg_rg, lightness_weight, seed_y=seed.y)
         # 조건을 만족하는 화소의 연결 요소 중 시드 칸에 걸친 것 = BFS로 넓힌 결과와 같음
         _, labels = cv2.connectedComponents(accept.astype(np.uint8), connectivity=cfg_rg["connectivity"])
         ys, xs = grid.cell_slice(seed.row, seed.col)
