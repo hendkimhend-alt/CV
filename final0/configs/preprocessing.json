@@ -7,6 +7,8 @@
     "_comment": "자동 Road Mask 추출. 길이 단위(px)는 모두 작업 해상도(work_long_side로 축소한 영상) 기준.",
     "work_long_side": 1024,
     "upsample_threshold": 0.5,
+    "_no_seed_full_frame": "시드가 0개라 마스크가 비면 화면 전체를 노면 후보로 씀 (검증 FAIL · 검출은 진행). false면 이전과 같음 (검출 건너뜀)",
+    "no_seed_full_frame": true,
     "features": {
       "smooth_sigma": 2.0,
       "gradient_sigma": 1.0,

@@ -67,6 +67,11 @@ def extract_road_mask(image, cfg_roi):
     refined = refine_mask(grown, cfg_roi["refine"])
     full = upsample_mask(refined, (width, height), cfg_roi["upsample_threshold"])
     timings["refine"] = (time.perf_counter() - t0) * 1000
+    if not seeds and cfg_roi.get("no_seed_full_frame"):
+        # 시드가 하나도 없으면 마스크가 비어 검출을 건너뜀 (예: 근접 촬영으로 노면 질감이 시드 범위를 넘음 · 제공 Japan_001959)
+        # → 화면 전체를 노면 후보로. 검증은 no_seed로 FAIL이고, 검출은 on_fail=use_candidate로 진행
+        full = np.ones((height, width), bool)
+        warnings.append("no_seed_full_frame")
 
     seed_records = []
     for seed, record in zip(seeds, growth):
