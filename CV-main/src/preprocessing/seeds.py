@@ -80,15 +80,20 @@ def _neighbor_support(grid, preliminary, lightness_weight, scale):
 
 
 def consistent_with_best(f, best, cell, cfg_seeds):
-    """첫 시드와 채도, 밝기, 질감이 너무 다르면 다른 재질로 보고 뺀다."""
+    """첫 시드와 채도, 밝기, 질감이 너무 다르면 다른 재질로 보고 뺀다. 어두운 쪽 밝기 차는 그림자로 보고 더 허용."""
     (br, bc), (r, c) = best, cell
     limit = cfg_seeds["max_chroma_distance_to_best"]
     if limit is not None:
         chroma_d = np.hypot(f["mean_a"][r, c] - f["mean_a"][br, bc], f["mean_b"][r, c] - f["mean_b"][br, bc])
         if chroma_d > limit:
             return False
+    # 밝은 쪽(차선, 하늘)과 어두운 쪽(그림자)을 따로 제한 — 그림자 진 노면 칸도 시드가 될 수 있게
     limit = cfg_seeds["max_lightness_distance_to_best"]
-    if limit is not None and abs(f["mean_L"][r, c] - f["mean_L"][br, bc]) > limit:
+    dark_limit = cfg_seeds.get("max_shadow_darkening_to_best", limit)
+    d_l = f["mean_L"][r, c] - f["mean_L"][br, bc]
+    if limit is not None and d_l > limit:
+        return False
+    if dark_limit is not None and -d_l > dark_limit:
         return False
     limit = cfg_seeds["max_texture_ratio_to_best"]
     if limit is not None:
