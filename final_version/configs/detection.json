@@ -14,7 +14,9 @@
     "order": ["gaussian", "line_close", "unsharp", "clahe"]
   },
   "crack": {
+    "_comment": "아주 흐린 사진(corrections의 blur_thr 미만)은 line_sigmas 대신 blur_line_sigmas로 찾는다. 흐려서 넓게 번진 균열이 잘게 끊기지 않게",
     "line_sigmas": [1.0, 1.5, 2.0],
+    "blur_line_sigmas": [1.0, 1.5, 2.0, 3.0],
     "tensor_propagate": 3,
     "tensor_ma": 10.0,
     "tensor_mi": 2.0,
