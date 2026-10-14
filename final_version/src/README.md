@@ -31,7 +31,7 @@ run.py
 `paths.py`의 `imread`, `imwrite`는 Windows에서 `cv2.imread`가 한글 경로를 못 읽는 문제 때문에 파일을 바이트로 읽고 쓴다.
 `DATA_DIR`은 `CV_DATA_DIR` 환경변수, `data/`, 위 폴더들의 `data/` 순서로 정해진다.
 
-`draw.py`는 노면을 초록으로 30% 칠하고 노란 테두리를 그린 다음 균열은 빨간 박스, 포트홀은 파란 박스로 그린다.
+`draw.py`는 균열은 빨간 박스, 포트홀은 파란 박스로 그린다.
 긴 변이 1280px보다 큰 사진은 줄여서 그린다.
 
 ## preprocessing/

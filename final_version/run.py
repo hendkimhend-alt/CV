@@ -87,7 +87,7 @@ def main():
             r = process(image, settings)
         except Exception as exc:  # 한 장이 실패해도 나머지는 계속
             print(f"  [{i}/{len(images)}] {path.name}  처리 실패: {type(exc).__name__}: {exc}")
-            vis = draw_result(image, None, [], title=f"{path.name}  processing failed")
+            vis = draw_result(image, [], title=f"{path.name}  processing failed")
             imwrite(run_dir / f"{names[path]}.jpg", vis)
             failed += 1
             continue
@@ -99,7 +99,7 @@ def main():
         else:
             title = f"{path.name}  road surface not found"
             note = "노면을 찾지 못해 박스 없음"
-        imwrite(run_dir / f"{names[path]}.jpg", draw_result(image, r.road_mask, r.boxes, title=title))
+        imwrite(run_dir / f"{names[path]}.jpg", draw_result(image, r.boxes, title=title))
         ms = (time.perf_counter() - t0) * 1000
         print(f"  [{i}/{len(images)}] {path.name}  균열 {n_crack}, 포트홀 {n_pothole}, {note}, {ms:.0f} ms")
     print(f"완료: {run_dir}" + (f" (실패 {failed}장)" if failed else ""))
