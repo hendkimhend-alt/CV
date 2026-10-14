@@ -1,0 +1,4 @@
+# 균열 검출의 세선화(cv2.ximgproc)가 있어야 해서 opencv-python이 아니라 opencv-contrib-python을 쓴다.
+# 둘을 함께 설치하면 충돌하므로 opencv-python이 이미 있으면 먼저 pip uninstall opencv-python
+opencv-contrib-python==4.10.0.84
+numpy>=2.0

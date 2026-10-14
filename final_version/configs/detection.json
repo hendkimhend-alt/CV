@@ -1,0 +1,46 @@
+{
+  "_comment": "검출 설정. crop.margin은 원본 사진 기준이고, 나머지 길이(px)는 검출기 입력(노면 영역을 잘라 긴 변 1024로 맞춘 영상) 기준.",
+  "crop": {
+    "margin": 16,
+    "long_side": 1024,
+    "min_road_overlap": 0.5
+  },
+  "corrections": {
+    "_comment": "노면 마스크 안에만 적용한다. 선명한 사진은 gaussian, line_close, clahe 순서, 아주 흐린 사진(노면 선명도 < blur_thr)은 unsharp, clahe 순서",
+    "gaussian": {"ksize": 3, "sigma": 0.8, "apply_to": "not_blur_rt", "blur_thr": 2.76},
+    "line_close": {"length": 7, "angles": 12, "apply_to": "not_blur_rt"},
+    "unsharp": {"amount": 3.0, "sigma": 3.0, "apply_to": "blur_rt"},
+    "clahe": {"clip": 1.0, "tile": 8},
+    "order": ["gaussian", "line_close", "unsharp", "clahe"]
+  },
+  "crack": {
+    "line_sigmas": [1.0, 1.5, 2.0],
+    "tensor_propagate": 3,
+    "tensor_ma": 10.0,
+    "tensor_mi": 2.0,
+    "tensor_bins": 16,
+    "tensor_beta": 27.6,
+    "line_hi_abs": 132.17221069335938,
+    "line_lo_ratio": 0.2,
+    "crack_min_length": 45,
+    "crack_min_elong": 3.0,
+    "drop_border": "t",
+    "border_margin": 2,
+    "valley_min_ratio": 0.35,
+    "valley_gap": 2,
+    "valley_samples": 40,
+    "valley_radius": 7,
+    "cue_filter": {"energy": 1.6082, "coherence": 0.2941, "color": 2.9964, "depth_min": 0.2666}
+  },
+  "pothole": {
+    "tex_k": 21,
+    "ring_ratio": 1.8,
+    "min_frac": 0.0006,
+    "max_frac": 0.08,
+    "chroma_max": 1.0,
+    "darkp10_min": 0.0,
+    "aspect_max": 3.0,
+    "min_rel_y": 0.4,
+    "road_color_max": 2.0
+  }
+}
