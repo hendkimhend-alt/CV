@@ -15,7 +15,7 @@ from preprocessing.preprocess import preprocess
 PRE_CFG = ROOT / "configs" / "preprocessing.json"
 DET_CFG = ROOT / "configs" / "detection.json"
 
-CRACK_KEYS = ("line_sigmas", "tensor_propagate", "tensor_ma", "tensor_mi", "tensor_bins", "tensor_beta",
+CRACK_KEYS = ("line_sigmas", "blur_line_sigmas", "tensor_propagate", "tensor_ma", "tensor_mi", "tensor_bins", "tensor_beta",
               "line_hi_abs", "line_lo_ratio", "crack_min_length", "crack_min_elong",
               "drop_border", "border_margin",
               "valley_min_ratio", "valley_gap", "valley_samples", "valley_radius", "cue_filter")
@@ -82,9 +82,14 @@ def process(image, settings):
     blurry = is_blurry(img, mask, geo, det["corrections"])
     img = apply_corrections(img, mask, det["corrections"], blurry)
 
+    # 아주 흐린 사진은 균열이 넓게 번져 있어 더 큰 크기(sigma)까지 보고 찾는다
+    crack_cfg = det["crack"]
+    if blurry:
+        crack_cfg = {**crack_cfg, "line_sigmas": crack_cfg["blur_line_sigmas"]}
+
     # 박스 면적의 절반 이상이 노면인 것만 남긴다
     boxes = []
-    for d in detect_cracks(img, det["crack"]) + detect_potholes(img, mask, det["pothole"]):
+    for d in detect_cracks(img, crack_cfg) + detect_potholes(img, mask, det["pothole"]):
         if road_overlap(mask, d["bbox"]) >= crop["min_road_overlap"]:
             x, y, w, h = to_original_bbox(d["bbox"], geo)
             bbox = [round(x, 1), round(y, 1), round(w, 1), round(h, 1)]

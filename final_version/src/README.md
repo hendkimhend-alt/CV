@@ -116,7 +116,7 @@ run.py
 
 `detect_cracks()`가 균열 박스를 돌려준다. 밝기 임계값이 아니라 선 모양으로 찾는 게 핵심이다.
 
-`line_score()`는 Hessian 고윳값으로 한 방향으로만 오목한 정도(`l1 - |l2|`)를 sigma 1.0, 1.5, 2.0에서 구해 평균한다.
+`line_score()`는 Hessian 고윳값으로 한 방향으로만 오목한 정도(`l1 - |l2|`)를 sigma 1.0, 1.5, 2.0에서 구해 평균한다. 아주 흐린 사진은 균열이 넓게 번져 있어 sigma 3.0까지 넣는다(`blur_line_sigmas`).
 골재 틈새 같은 점은 사방이 오목해서 점수가 낮게 나온다. `tensor_propagate()`는 각 점의 세기를 자기 선 방향의 길쭉한 가우시안
 (sigma 10 x 2)으로 이웃에 퍼뜨리기를 3번 반복해서 끊긴 조각을 잇는다(Chen et al. 2021). 그다음 Canny처럼 선 중심만 남기고
 (`line_centerline`), 강한 기준 132.17과 약한 기준(그 0.2배)으로 이중 임계값을 건 뒤(`seeded`) `cv2.ximgproc.thinning`으로 1px로 만든다.
