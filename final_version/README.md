@@ -61,6 +61,26 @@ python run.py 사진폴더 --out 결과폴더
 6. 포트홀: 주변 노면보다 1.8배 넘게 거친 영역을 찾고, 색, 어두운 부분, 모양, 위치, 주변 노면 색으로 거른다.
 7. 도로 위 판정: 박스 넓이의 절반 이상이 노면인 후보만 남기고 원본 좌표로 되돌려 그린다.
 
+## 코드 구조
+
+`run.py`가 사진마다 `src/pipeline.py`의 `process()`를 부른다. 처리 순서는 다음과 같다.
+
+```text
+run.py
+  pipeline.process()
+    preprocessing/preprocess.py            노면 마스크, 검증, Gamma
+      road_mask.py                         grid_features, seeds, region_growing, mask_refine 순서로 부름
+      mask_validation.py
+      gamma.py
+    preprocessing/detector_adapter.py      노면 영역 자르기, 크기 맞추기
+    preprocessing/detector_corrections.py  흐림 판정, 검출 직전 보정
+    detect.py                              균열
+    pothole.py                             포트홀
+  draw.py                                  결과 그림
+```
+
+`roadcue.py`는 균열과 포트홀이 함께 쓰는 노면 단서(주변이 도로처럼 보이는지)를 잰다. 파일별 자세한 설명은 [`src/README.md`](src/README.md)에 있다.
+
 ## 폴더 구성
 
 | 경로 | 내용 |
