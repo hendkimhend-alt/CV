@@ -10,6 +10,7 @@ from .road_mask import extract_road_mask
 
 @dataclass
 class Preprocessed:
+    """전처리 결과."""
     road_mask: np.ndarray            # uint8 0/255, 원본 크기. 노면을 못 찾으면 None
     image: np.ndarray = None         # Gamma까지 적용한 영상 (노면 밖 화소는 원본 그대로)
     mask_passed: bool = False        # 자동 마스크가 검증을 통과했나
@@ -17,6 +18,7 @@ class Preprocessed:
 
 
 def preprocess(image, cfg):
+    """노면 마스크를 만들고 검증한 뒤, 어두우면 노면 안에 Gamma를 건다."""
     road_mask, seed_points = extract_road_mask(image, cfg["road_mask"])
     passed, reasons = validate_road_mask(road_mask, seed_points, cfg["validation"])
     if not np.any(road_mask):

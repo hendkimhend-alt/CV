@@ -4,6 +4,7 @@ import numpy as np
 
 
 def _ellipse(size):
+    """size x size 타원 커널."""
     return cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (size, size))
 
 
@@ -25,6 +26,7 @@ def fill_holes(mask, max_area=None):
 
 
 def remove_small_components(mask, min_area):
+    """min_area보다 작은 덩어리를 지운다."""
     count, labels, stats, _ = cv2.connectedComponentsWithStats(mask.astype(np.uint8), connectivity=8)
     keep = np.zeros(count, bool)
     keep[1:] = stats[1:, cv2.CC_STAT_AREA] >= min_area
@@ -32,6 +34,7 @@ def remove_small_components(mask, min_area):
 
 
 def refine_mask(mask, cfg_refine):
+    """Region Growing 결과를 닫힘 → 열림 → 작은 구멍 채우기 → 작은 조각 지우기로 다듬는다."""
     area = mask.size
     out = mask.astype(np.uint8)
     out = cv2.morphologyEx(out, cv2.MORPH_CLOSE, _ellipse(cfg_refine["close_kernel"]),

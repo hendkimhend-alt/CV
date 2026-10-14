@@ -6,6 +6,7 @@ from .mask_refine import fill_holes
 
 
 def mask_metrics(mask, seed_points):
+    """검증 지표 네 가지: 면적 비율, 최대 연결 요소 비율, 구멍 비율, 시드 일치율."""
     road = mask > 0
     area = int(road.sum())
     metrics = {"mask_area_ratio": area / road.size, "largest_component_ratio": None,
@@ -27,6 +28,7 @@ def mask_metrics(mask, seed_points):
 
 
 def validate_road_mask(mask, seed_points, rules):
+    """지표가 기준을 모두 넘으면 PASS. (통과 여부, 실패 이유 목록)을 돌려준다."""
     metrics = mask_metrics(mask, seed_points)
     reasons = []
     if not seed_points:

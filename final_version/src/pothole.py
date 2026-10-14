@@ -24,6 +24,7 @@ MIN_RING_COVERAGE = 0.3             # 고리 안에 노면이 이것보다 적�
 
 
 def _window_sum(a, n):
+    """n x n 창 안의 합 (창 밖은 0)."""
     return cv2.boxFilter(a, -1, (n, n), normalize=False, borderType=cv2.BORDER_CONSTANT)
 
 
@@ -67,6 +68,7 @@ def _box_cues(gray, chrom, box):
 
 
 def detect_potholes(img, mask, cfg):
+    """포트홀 박스 목록을 돌려준다. 고리 비가 ring_ratio를 넘는 덩어리를 찾고 다섯 가지 확인으로 거른다."""
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY).astype(np.float32)
     H, W = gray.shape
     s = img.astype(np.float32).sum(2) + 1

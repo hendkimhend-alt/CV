@@ -11,12 +11,14 @@ import numpy as np
 
 @lru_cache(maxsize=32)
 def gamma_lut(gamma):
+    """gamma 값의 밝기 변환표 (256칸)."""
     lut = np.rint(255.0 * (np.arange(256, dtype=np.float64) / 255.0) ** gamma).astype(np.uint8)
     lut.setflags(write=False)
     return lut
 
 
 def apply_gamma(img, gamma, mask):
+    """노면 안 화소에만 Gamma를 건다."""
     corrected = cv2.LUT(img, gamma_lut(float(gamma)))
     out = img.copy()
     road = mask > 0
@@ -25,7 +27,7 @@ def apply_gamma(img, gamma, mask):
 
 
 def analysis_mask(road_mask, cfg):
-    # 노면 가장자리는 빼고 잰다. 남는 게 너무 적으면 Gamma 판단을 안 한다
+    """노면 가장자리를 깎은 밝기 측정 영역. 남는 게 너무 적으면 None (Gamma 판단을 안 함)."""
     k = cfg["erode_kernel"]
     kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (k, k))
     analysis = cv2.erode(road_mask.copy(), kernel, iterations=1)
@@ -39,6 +41,7 @@ def analysis_mask(road_mask, cfg):
 
 
 def measure(img, analysis, cfg):
+    """측정 영역의 밝기 평균, 어두운 화소 비율, 포화 화소 비율 (긴 변 measure_long_side 사본에서)."""
     scale = cfg["measure_long_side"] / max(img.shape[:2])
     if abs(scale - 1.0) > 1e-12:
         size = (max(1, round(img.shape[1] * scale)), max(1, round(img.shape[0] * scale)))
@@ -54,20 +57,24 @@ def measure(img, analysis, cfg):
 
 
 def is_dark(m, cfg):
+    """밝기 평균이 낮고 어두운 화소가 많으면 어둡다."""
     return m["gray_mean"] < cfg["dark_mean_below"] and m["dark_ratio"] > cfg["dark_ratio_above"]
 
 
 def is_resolved(m, cfg):
+    """어두움의 두 조건이 모두 풀렸나."""
     # not is_dark가 아님. 두 조건이 둘 다 풀려야 멈춘다
     return m["gray_mean"] >= cfg["dark_mean_below"] and m["dark_ratio"] <= cfg["dark_ratio_above"]
 
 
 def guard_triggered(before, after, cfg):
+    """Gamma 뒤 포화 화소가 기준을 넘고 전보다 늘었나."""
     sat = after["saturation_ratio"]
     return sat > cfg["max_saturation_after"] and sat > before["saturation_ratio"]
 
 
 def correct_gamma(image, road_mask, cfg):
+    """어두운 노면이면 후보 gamma를 약한 것부터 써 보고 고른 결과를 돌려준다. 아니면 원본 그대로."""
     analysis = analysis_mask(road_mask, cfg)
     if analysis is None:
         return image

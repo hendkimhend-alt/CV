@@ -4,6 +4,7 @@ import cv2
 
 
 def road_bbox(road_mask, margin):
+    """노면을 감싸는 사각형 (여백 margin)."""
     ys, xs = (road_mask > 0).nonzero()
     h, w = road_mask.shape
     x0 = max(0, int(xs.min()) - margin)
@@ -14,6 +15,7 @@ def road_bbox(road_mask, margin):
 
 
 def to_detector_input(image, road_mask, long_side, margin):
+    """노면 사각형으로 잘라 긴 변을 long_side로 맞춘 영상, 마스크, 좌표 변환 정보를 돌려준다."""
     height, width = image.shape[:2]
     x0, y0, cw, ch = road_bbox(road_mask, margin)
     image_c = image[y0:y0 + ch, x0:x0 + cw]
@@ -34,6 +36,7 @@ def to_detector_input(image, road_mask, long_side, margin):
 
 
 def to_original_bbox(bbox, geometry):
+    """검출기 좌표의 박스를 원본 사진 좌표로 되돌린다."""
     x, y, w, h = bbox
     sx, sy = geometry["scale_x"], geometry["scale_y"]
     return x / sx + geometry["crop_x"], y / sy + geometry["crop_y"], w / sx, h / sy

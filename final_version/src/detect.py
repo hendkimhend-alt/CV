@@ -1,7 +1,8 @@
 """균열 검출.
 
 detect_cracks(img, cfg)에 검출기 입력(BGR, 긴 변 1024)을 넣으면 균열 박스 목록을 돌려준다.
-Hessian 선 점수로 어두운 선을 찾고, 덩어리마다 길이와 모양을 본 다음
+Hessian 선 점수로 어두운 선을 찾고 (아주 흐린 사진은 pipeline.py가 더 큰 sigma를 넘긴다),
+텐서 전파로 끊긴 조각을 이은 뒤 이중 임계값으로 흔적을 남긴다. 덩어리마다 길이와 모양을 본 다음
 양옆이 밝은 골짜기인지, 주변이 도로처럼 보이는지(roadcue.py)로 한 번 더 거른다.
 """
 import cv2
@@ -11,6 +12,7 @@ from roadcue import cue_values, maps, onroad_depth, ref_stats
 
 
 def detect_cracks(img, cfg):
+    """균열 박스 목록을 돌려준다. 흔적을 찾은 뒤 덩어리마다 모양, 위 테두리, 양쪽 확인, 노면 단서 · 깊이로 거른다."""
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     H, W = gray.shape
     trace = line_trace(gray, cfg)
@@ -38,6 +40,7 @@ def detect_cracks(img, cfg):
 
 
 def _rejected_by_cues(cues, limits):
+    """노면 단서 중 하나라도 기준을 넘으면 True."""
     # 키가 _min으로 끝나면 하한, 나머지는 상한
     for k, t in limits.items():
         if k.endswith("_min"):
@@ -79,6 +82,7 @@ def line_score(gray, sigmas):
 
 
 def line_centerline(score, angle):
+    """선 점수에서 선을 가로지르는 방향으로 가장 큰 점만 남긴다 (중심선)."""
     # Canny의 non-maximum suppression과 같은 방식 (4방향)
     # 선을 가로지르는 방향을 4개로 나눔 (그 방향의 양옆 이웃과 비교): 0 가로, 1 \ 대각선, 2 세로, 3 / 대각선
     q = (np.round(angle / (np.pi / 4)) % 4).astype(np.int8)
@@ -93,7 +97,7 @@ def line_centerline(score, angle):
 
 
 def seeded(weak, strong):
-    # hysteresis: 강한 픽셀과 이어진 약한 픽셀까지 살린다
+    """약한 기준을 넘은 덩어리 중 강한 점을 포함한 것만 남긴다 (이중 임계값)."""
     n, labels = cv2.connectedComponents(weak.astype(np.uint8), connectivity=8)
     keep = np.zeros(n, bool)
     keep[np.unique(labels[strong & weak])] = True
@@ -105,6 +109,7 @@ _PROP_KERNELS = {}
 
 
 def _prop_kernels(n, length, width):
+    """텐서 전파에 쓰는 방향별 커널 목록 [(각도, 커널)]."""
     # 방향 칸마다 그 방향으로 길쭉한 가우시안 커널. 매번 만들면 느려서 캐시해 둔다
     key = (n, length, width)
     if key not in _PROP_KERNELS:
@@ -157,6 +162,7 @@ def tensor_propagate(score, angle, cfg):
 
 
 def line_trace(gray, cfg):
+    """찾기와 잇기: 선 점수 → 텐서 전파 → 중심선 → 이중 임계값 → 1px 세선화. 균열 흔적(0/255)을 돌려준다."""
     score, angle = line_score(gray, cfg["line_sigmas"])
     field = tensor_propagate(score, angle, cfg)
     # 전파 결과는 띠로만 쓰고 중심선은 원래 점수 방향으로 찾는다
@@ -169,6 +175,7 @@ def line_trace(gray, cfg):
 # ---------- 덩어리 ----------
 
 def _components(mask):
+    """흔적을 8-연결 덩어리로 나눠 덩어리마다 점 좌표 (x, y) 배열을 돌려준다."""
     n, labels = cv2.connectedComponents((mask > 0).astype(np.uint8), connectivity=8)
     ys, xs = np.nonzero(mask)
     lab = labels[ys, xs]
@@ -180,6 +187,7 @@ def _components(mask):
 
 
 def shape_features(pts):
+    """덩어리의 박스, 길이, 평균 폭, 세장비를 잰다."""
     x, y, w, h = cv2.boundingRect(pts)
     area = float(len(pts))
     (_, _), (rw, rh), _ = cv2.minAreaRect(pts)   # 대각선 균열 때문에 회전 박스로 잼
@@ -191,6 +199,7 @@ def shape_features(pts):
 
 
 def is_crack_shape(det, cfg):
+    """길이와 세장비가 기준 이상인가."""
     return det["length"] >= cfg["crack_min_length"] and det["elong"] >= cfg["crack_min_elong"]
 
 
@@ -228,6 +237,7 @@ def valley_score(gray, pts, width, cfg):
 
 
 def _touches_border(bbox, W, H, cfg):
+    """박스가 drop_border로 지정한 테두리에 닿았는가."""
     # 설정은 위쪽만("t"). 위 경계에는 먼 차나 인도가 걸리고, 아래까지 버리면 화면 밖으로 이어진 균열을 놓친다
     x, y, w, h = bbox
     m = cfg["border_margin"]

@@ -15,6 +15,7 @@ SIGMA = 4.0
 
 
 def maps(bgr):
+    """단서 지도: 색상-채도 좌표 (cx, cy), 구조 텐서 에너지, 결 정렬도."""
     hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV).astype(np.float32)
     ang = hsv[..., 0] * (np.pi / 90.0)                       # OpenCV 색상은 0~180
     sat = hsv[..., 1] / 255.0
@@ -33,6 +34,7 @@ def maps(bgr):
 
 
 def ref_stats(m, H, W):
+    """사진의 도로 표본 영역(높이 60~80%, 너비 30~70%)에서 비교 기준값을 잰다."""
     r = (slice(int(.60 * H), int(.80 * H)), slice(int(.30 * W), int(.70 * W)))
     cx, cy, e, coh = (x[r] for x in m)
     pts = np.stack([cx.ravel(), cy.ravel()], 1)
@@ -42,6 +44,7 @@ def ref_stats(m, H, W):
 
 
 def ring(b, W, H):
+    """상자를 둘러싼 고리 영역 (창 slice, 창 안에서 상자를 뺀 bool 마스크)."""
     x1, y1, x2, y2 = b
     cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
     hw, hh = (x2 - x1) + 6, (y2 - y1) + 6
@@ -53,6 +56,7 @@ def ring(b, W, H):
 
 
 def cue_values(m, st, b, W, H):
+    """고리의 color, energy, coherence를 도로 표본과 비교한 값. 고리가 너무 작으면 None."""
     sl, keep = ring(b, W, H)
     if keep.sum() < 20:
         return None
@@ -64,6 +68,7 @@ def cue_values(m, st, b, W, H):
 
 
 def onroad_depth(pts, smooth, b, W, H):
+    """후보가 둘레 노면보다 얼마나 어두운지 (깊이)."""
     sl, keep = ring(b, W, H)
     rg = smooth[sl][keep]
     q1, q3 = np.percentile(rg, [25, 75])

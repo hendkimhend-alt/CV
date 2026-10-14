@@ -23,6 +23,7 @@ IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff", ".webp"}
 
 
 def list_images(path):
+    """사진 파일이면 그 한 장, 폴더면 하위 폴더까지의 사진 목록(숨김 폴더 제외)을 돌려준다."""
     if path.is_file():
         return [path]
     return sorted(p for p in path.rglob("*") if p.is_file() and p.suffix.lower() in IMAGE_EXTENSIONS
@@ -30,6 +31,7 @@ def list_images(path):
 
 
 def output_names(images, base):
+    """사진마다 결과 파일 이름을 정한다."""
     # 보통은 파일 이름, 하위 폴더에 같은 이름이 있으면 폴더__이름
     stems = [p.stem for p in images]
     return {p: p.stem if stems.count(p.stem) == 1
@@ -38,6 +40,7 @@ def output_names(images, base):
 
 
 def new_run_dir(parent):
+    """result/run_<시각> 폴더를 새로 만든다. 같은 이름이 있으면 _2, _3을 붙인다."""
     base = datetime.now().strftime("run_%Y%m%d_%H%M%S")
     for n in range(1, 100):
         run_dir = parent / (base if n == 1 else f"{base}_{n}")
@@ -48,6 +51,7 @@ def new_run_dir(parent):
 
 
 def main():
+    """인자를 읽고 사진마다 처리해 결과 그림을 저장한다."""
     p = argparse.ArgumentParser(description="도로 사진에 노면 마스크와 균열, 포트홀 박스를 그려 저장")
     p.add_argument("input", nargs="?", type=Path, default=DATA_DIR / "test",
                    help="사진 파일 또는 폴더 (기본 data/test/)")

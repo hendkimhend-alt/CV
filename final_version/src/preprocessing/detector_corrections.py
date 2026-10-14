@@ -10,6 +10,7 @@ import numpy as np
 
 
 def line_kernel(length, angle_deg):
+    """angle_deg 방향, 길이 length의 1px 막대 커널."""
     k = np.zeros((length, length), np.uint8)
     c = (length - 1) / 2
     dx, dy = np.cos(np.radians(angle_deg)) * c, -np.sin(np.radians(angle_deg)) * c
@@ -30,11 +31,13 @@ def road_sharpness(img, mask, geo):
 
 
 def is_blurry(img, mask, geo, corr):
+    """노면 선명도가 blur_thr보다 낮으면 아주 흐린 사진으로 본다."""
     thr = next(c["blur_thr"] for c in corr.values() if isinstance(c, dict) and "blur_thr" in c)
     return road_sharpness(img, mask, geo) < thr
 
 
 def apply_corrections(img, mask, corr, blurry):
+    """흐림 여부에 맞는 보정을 order 순서로 걸고, 노면 안 화소만 바꾼다."""
     tag = "blur_rt" if blurry else "not_blur_rt"
     out = img
     for step in corr["order"]:

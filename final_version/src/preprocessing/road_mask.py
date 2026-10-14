@@ -9,6 +9,7 @@ from .seeds import score_cells, select_seeds
 
 
 def work_image(image, long_side):
+    """긴 변이 long_side보다 크면 줄인 작업 영상과 배율을 돌려준다."""
     height, width = image.shape[:2]
     scale = min(1.0, long_side / max(height, width))
     if scale >= 1.0:
@@ -18,6 +19,7 @@ def work_image(image, long_side):
 
 
 def upsample_mask(mask_work, size, threshold):
+    """작업 영상의 마스크를 원본 크기로 키운다 (선형 보간 후 threshold 이상)."""
     if mask_work.shape[::-1] == tuple(size):
         return mask_work.copy()
     up = cv2.resize(mask_work.astype(np.float32), size, interpolation=cv2.INTER_LINEAR)

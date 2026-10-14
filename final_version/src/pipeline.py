@@ -31,6 +31,7 @@ CUE_KEYS = ("energy", "coherence", "color", "depth_min")
 
 @dataclass
 class Result:
+    """사진 한 장의 처리 결과."""
     ok: bool                         # 노면을 못 찾으면 False
     road_mask: np.ndarray = None
     boxes: list = field(default_factory=list)   # 원본 좌표 [{"type", "bbox": [x, y, w, h]}]
@@ -40,6 +41,7 @@ class Result:
 
 
 def load_settings():
+    """두 설정 파일을 읽고 항목별 키를 검사해 돌려준다."""
     pre, det = load_json(PRE_CFG), load_json(DET_CFG)
     check_keys(pre, ("road_mask", "validation", "gamma"), PRE_CFG.name)
     check_keys(pre["validation"], VALIDATION_KEYS, f"{PRE_CFG.name} validation")
@@ -54,6 +56,7 @@ def load_settings():
 
 
 def check_opencv():
+    """세선화에 필요한 cv2.ximgproc가 있는지 본다."""
     # 세선화(cv2.ximgproc.thinning)는 contrib 패키지에만 있다
     if not hasattr(cv2, "ximgproc"):
         raise ConfigError("cv2.ximgproc가 없습니다. pip install -r requirements.txt 로 "
@@ -62,7 +65,7 @@ def check_opencv():
 
 
 def road_overlap(mask, bbox):
-    # 박스 안에서 노면이 차지하는 비율 (검출기 좌표)
+    """박스 안에서 노면이 차지하는 비율 (검출기 좌표)."""
     x, y, w, h = (int(round(v)) for v in bbox)
     H, W = mask.shape
     x0, y0, x1, y1 = max(0, x), max(0, y), min(W, x + max(w, 1)), min(H, y + max(h, 1))
@@ -72,6 +75,7 @@ def road_overlap(mask, bbox):
 
 
 def process(image, settings):
+    """사진 한 장: 전처리 → 자르기 → 흐림 판정 · 보정 → 균열 · 포트홀 검출 → 도로 위 판정. 박스는 원본 좌표."""
     pre = preprocess(image, settings["preprocessing"])
     if pre.road_mask is None:
         return Result(ok=False)

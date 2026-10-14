@@ -7,6 +7,7 @@ import numpy as np
 
 @dataclass
 class FeatureMaps:
+    """픽셀 특징 지도."""
     lab: np.ndarray        # H x W x 3 float32, L* 0~100
     gradient: np.ndarray   # H x W, 화소당 L* 변화량
     texture: np.ndarray    # H x W, |Laplacian| 국소 평균
@@ -14,6 +15,7 @@ class FeatureMaps:
 
 @dataclass
 class GridFeatures:
+    """격자 칸별 특징."""
     cell_size: int
     rows: int
     cols: int
@@ -22,17 +24,20 @@ class GridFeatures:
     features: dict          # 이름별 (rows, cols) 배열
 
     def cell_slice(self, r, c):
+        """(r, c) 칸의 행, 열 범위."""
         cs = self.cell_size
         rows = slice(r * cs, min((r + 1) * cs, self.height))
         cols = slice(c * cs, min((c + 1) * cs, self.width))
         return rows, cols
 
     def cell_center(self, r, c):
+        """(r, c) 칸 중심의 (x, y)."""
         ys, xs = self.cell_slice(r, c)
         return (xs.start + xs.stop - 1) / 2.0, (ys.start + ys.stop - 1) / 2.0
 
 
 def bgr_to_lab(bgr):
+    """BGR(0~255)을 Lab(float32)으로 바꾼다."""
     return cv2.cvtColor(bgr.astype(np.float32) / 255.0, cv2.COLOR_BGR2Lab)
 
 
@@ -43,12 +48,14 @@ def color_distance(lab_a, lab_b, lightness_weight):
 
 
 def _blur(img, sigma):
+    """가우시안 흐림 (sigma가 0 이하면 그대로)."""
     if sigma <= 0:
         return img
     return cv2.GaussianBlur(img, (0, 0), sigma, borderType=cv2.BORDER_REFLECT_101)
 
 
 def compute_feature_maps(bgr, cfg_features):
+    """Lab, 기울기 크기, 질감(|Laplacian| 국소 평균) 지도를 만든다."""
     lab = bgr_to_lab(_blur(bgr, cfg_features["smooth_sigma"]))
     raw_l = bgr_to_lab(bgr)[..., 0]
 
@@ -64,6 +71,7 @@ def compute_feature_maps(bgr, cfg_features):
 
 
 def compute_grid_features(maps, cfg_grid, cfg_features):
+    """칸마다 색 평균 · 표준편차, 위치, 질감, 기울기, 경계 밀도, 채도, 이웃과의 색 거리를 잰다."""
     cs = cfg_grid["cell_size"]
     height, width = maps.gradient.shape
     rows, cols = -(-height // cs), -(-width // cs)
@@ -93,6 +101,7 @@ def compute_grid_features(maps, cfg_grid, cfg_features):
 
 
 def neighbor_offsets():
+    """8-이웃 칸의 (행, 열) 차이."""
     return [(dr, dc) for dr in (-1, 0, 1) for dc in (-1, 0, 1) if (dr, dc) != (0, 0)]
 
 

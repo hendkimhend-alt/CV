@@ -10,6 +10,7 @@ EPS = 1e-6
 
 @dataclass
 class Seed:
+    """시드 칸."""
     row: int
     col: int
     x: float            # 작업 영상에서 칸 중심
@@ -24,6 +25,7 @@ def _texture_score(values, lo, hi):
 
 
 def _geometric_mean(parts, weights):
+    """항목별 점수의 가중 기하평균."""
     # 기하평균이라 한 항목만 0에 가까워도 전체가 낮아진다
     total_w = sum(weights[name] for name in parts)
     log_sum = sum(weights[name] * np.log(np.maximum(value, EPS)) for name, value in parts.items())
@@ -31,6 +33,7 @@ def _geometric_mean(parts, weights):
 
 
 def score_cells(grid, cfg_seeds, lightness_weight):
+    """칸마다 도로다움 점수 (위치, 무채색, 균질, 질감, 밝기, 이웃 유사도의 기하평균)."""
     f = grid.features
     pos = cfg_seeds["position"]
     comps = {
@@ -95,6 +98,7 @@ def consistent_with_best(f, best, cell, cfg_seeds):
 
 
 def select_seeds(grid, scores, cfg_seeds, cfg_grid):
+    """점수 높은 칸부터, 서로 min_distance_cells 이상 떨어지고 첫 시드와 재질이 비슷한 칸을 count_max개까지 고른다."""
     f = grid.features
     eligible = f["fill"] >= cfg_grid["min_cell_fill"]       # 가장자리에서 잘린 칸 제외
     flat = np.where(eligible, scores, -1.0).ravel()

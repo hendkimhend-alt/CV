@@ -4,6 +4,7 @@ import numpy as np
 
 
 def seed_reference(maps, grid, seed):
+    """시드 칸의 기준값: Lab 평균, a · b 퍼짐, 질감 중앙값."""
     ys, xs = grid.cell_slice(seed.row, seed.col)
     lab = maps.lab[ys, xs].reshape(-1, 3).astype(np.float64)
     std = lab.std(0)
@@ -13,11 +14,13 @@ def seed_reference(maps, grid, seed):
 
 
 def color_threshold(reference, cfg_rg):
+    """색 거리 기준. 시드 칸의 색 퍼짐만큼 넓히되 상한을 둔다."""
     t = cfg_rg["color_threshold"] + cfg_rg["seed_std_scale"] * reference["sigma_ab"]
     return min(t, cfg_rg["max_color_threshold"])
 
 
 def acceptance_mask(maps, reference, cfg_rg, lightness_weight, seed_y):
+    """시드와 비교해 노면으로 받을 화소 (색, 밝기, 그림자, 기울기, 질감 조건)."""
     lab = maps.lab
     d_l = lab[..., 0] - reference["lab"][0]
     d_a = lab[..., 1] - reference["lab"][1]
@@ -48,6 +51,7 @@ def acceptance_mask(maps, reference, cfg_rg, lightness_weight, seed_y):
 
 
 def grow_regions(maps, grid, seeds, cfg_rg, lightness_weight):
+    """시드마다 받을 화소 중 시드 칸에 이어진 덩어리를 모아 노면 영역을 만든다."""
     union = np.zeros(maps.gradient.shape, bool)
     for seed in seeds:
         reference = seed_reference(maps, grid, seed)
