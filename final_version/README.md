@@ -5,21 +5,37 @@
 
 ## 실행
 
+Python 3.9 이상이 필요하다.
+
+1. 코드 폴더로 이동해 라이브러리를 설치한다.
+
 ```bash
+cd final_version
 pip install -r requirements.txt
+```
+
+opencv-python이 이미 깔려 있으면 먼저 `pip uninstall opencv-python`을 하고 설치한다.
+균열 검출에 opencv-contrib-python에만 있는 기능(cv2.ximgproc)을 쓰는데, 둘을 같이 깔면 충돌한다.
+
+2. `data/test/` 폴더를 만들고 검출할 사진을 넣는다.
+
+```bash
+mkdir -p data/test        # Windows: mkdir data\test
+```
+
+3. 실행한다.
+
+```bash
 python run.py
 ```
 
-`data/test/`에 사진을 넣고 `python run.py`를 실행하면 된다. 다른 사진이나 폴더를 바로 지정할 수도 있다.
+다른 사진이나 폴더를 바로 지정할 수도 있다.
 
 ```bash
 python run.py 사진.jpg
 python run.py 사진폴더              # 하위 폴더까지 전부
 python run.py 사진폴더 --out 결과폴더
 ```
-
-opencv-python이 이미 깔려 있으면 먼저 `pip uninstall opencv-python`을 하고 설치한다.
-균열 검출에 opencv-contrib-python에만 있는 기능(cv2.ximgproc)을 쓰는데, 둘을 같이 깔면 충돌한다.
 
 ## 결과
 
